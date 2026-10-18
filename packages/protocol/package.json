@@ -1,0 +1,30 @@
+{
+  "name": "@tapthrough/protocol",
+  "version": "0.1.0",
+  "description": "Versioned schemas and link-token helpers shared by every Tapthrough component",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./tokens": {
+      "types": "./dist/tokens.d.ts",
+      "default": "./dist/tokens.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "jose": "6.2.12",
+    "zod": "4.6.7"
+  }
+}
