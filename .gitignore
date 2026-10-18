@@ -5,3 +5,6 @@ dist/
 .env*
 !.env.example
 .DS_Store
+
+# The Action runs from its committed bundle.
+!packages/action/dist/

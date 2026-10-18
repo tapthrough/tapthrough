@@ -1,0 +1,25 @@
+name: Tapthrough
+description: Comment a preview link on every pull request that opens the change on the right screen, with test data and a test plan
+author: Tapthrough
+branding:
+  icon: smartphone
+  color: blue
+
+inputs:
+  update-json:
+    description: File written by `eas update --json --non-interactive`, relative to working-directory
+    required: true
+  api-url:
+    description: Tapthrough's base URL; also the audience of the GitHub OIDC token
+    default: https://tapthrough.dev
+  working-directory:
+    description: The Expo app's directory
+    default: .
+
+outputs:
+  links:
+    description: JSON object of scenario key to preview link
+
+runs:
+  using: node24
+  main: packages/action/dist/index.js

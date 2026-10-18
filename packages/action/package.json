@@ -1,0 +1,19 @@
+{
+  "name": "@tapthrough/action",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Tapthrough GitHub Action: reports each PR's EAS update so Tapthrough can comment a preview link",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/index.js --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tapthrough/protocol": "workspace:^"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
