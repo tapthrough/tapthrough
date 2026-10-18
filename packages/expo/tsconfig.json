@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "jsx": "react-jsx",
+    // Consumed through Metro, not Node, so resolve the way a bundler does.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["react-native"]
+  },
+  "include": ["src"]
+}

@@ -12,7 +12,7 @@ and the shared protocol. The hosted service lives in a separate, private repo.
 | --- | --- | --- |
 | [`@tapthrough/protocol`](packages/protocol) | M1 | Versioned schemas (scenario, run report, seed hook) and link-token signing and verification |
 | `@tapthrough/cli` | M3 | Builds the manifest and reports runs from the Action |
-| `@tapthrough/expo` | M2 | The SDK: logs in, seeds, and navigates when the app opens from a link |
+| [`@tapthrough/expo`](packages/expo) | M2 | The SDK and config plugin: seeds, logs in, applies flags and navigates when the app opens from a link |
 | [`@tapthrough/seed`](packages/seed) | M2 | Fetch-API seed-hook handler for Deno, Node or edge functions, with a Supabase test-user helper |
 
 ## Development
