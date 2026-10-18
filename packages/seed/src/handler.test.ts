@@ -1,4 +1,4 @@
-import type { RedeemResponse } from '@tapthrough/protocol'
+import type { RedeemResponse, SeedHookResponse } from '@tapthrough/protocol'
 import {
   generateSigningKey,
   importSigningKey,
@@ -76,6 +76,12 @@ function handler(overrides: Partial<SeedHandlerOptions> = {}) {
   })
 }
 
+/** Success and error fields in one shape, so each test reads whichever it expects. */
+type Body = Partial<SeedHookResponse> & {
+  refs: Record<string, unknown>
+  error: { code: string; message: string }
+}
+
 async function post(h: (request: Request) => Promise<Response>, body: unknown) {
   const response = await h(
     new Request('https://hook.test/seed', {
@@ -84,7 +90,7 @@ async function post(h: (request: Request) => Promise<Response>, body: unknown) {
       body: JSON.stringify(body),
     }),
   )
-  return { status: response.status, body: (await response.json()) as Record<string, any> }
+  return { status: response.status, body: (await response.json()) as Body }
 }
 
 describe('createSeedHandler', () => {
