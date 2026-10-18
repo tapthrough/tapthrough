@@ -47,7 +47,12 @@ export function Tapthrough({ children, auth, reset, seedHookUrl, enabled }: Tapt
 
   useEffect(() => {
     if (!navigationReady) return
-    controller.setNavigator((path) => router.replace(path as Href))
+    // Back to the root of the stack, then push: the reviewer lands on the scenario's
+    // screen with a back button, instead of on a stack that holds only that screen.
+    controller.setNavigator((path) => {
+      if (router.canDismiss()) router.dismissAll()
+      router.push(path as Href)
+    })
     return () => controller.setNavigator(undefined)
   }, [navigationReady])
 
