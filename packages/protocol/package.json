@@ -3,10 +3,18 @@
   "version": "0.1.0",
   "description": "Versioned schemas and link-token helpers shared by every Tapthrough component",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tapthrough/tapthrough.git",
+    "directory": "packages/protocol"
+  },
+  "homepage": "https://github.com/tapthrough/tapthrough/tree/main/packages/protocol",
   "type": "module",
   "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "!src/**/*.test.ts"
   ],
   "exports": {
     ".": {
@@ -21,7 +29,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build"
   },
   "dependencies": {
     "jose": "6.2.12",
