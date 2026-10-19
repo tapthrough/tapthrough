@@ -1,6 +1,6 @@
 import Constants from 'expo-constants'
 import { usePathname } from 'expo-router'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   Image,
@@ -16,12 +16,23 @@ import {
   TextInput,
   View,
 } from 'react-native'
+import { createDiagnostics, installDiagnostics } from './core/diagnostics.js'
 import { previewContextFromManifest, sendFeedback } from './core/feedback.js'
 import { controller } from './runtime.js'
 import { captureScreenshot, type Screenshot } from './screenshot.js'
 
 /** Remembered for the session, so reviewers type their name once. */
 let rememberedName = ''
+
+const diagnostics = createDiagnostics()
+let diagnosticsInstalled = false
+
+declare const ErrorUtils:
+  | {
+      getGlobalHandler(): (error: unknown, isFatal?: boolean) => void
+      setGlobalHandler(handler: (error: unknown, isFatal?: boolean) => void): void
+    }
+  | undefined
 
 function deviceInfo() {
   const constants = Platform.constants as unknown as Record<string, unknown>
@@ -55,6 +66,25 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
   const pathname = usePathname()
   const [phase, setPhase] = useState<'idle' | 'capturing' | 'composing'>('idle')
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null)
+
+  // Only PR previews record diagnostics; regular builds are never hooked.
+  useEffect(() => {
+    if (!preview || diagnosticsInstalled) return
+    diagnosticsInstalled = true
+    installDiagnostics(
+      diagnostics,
+      {
+        console,
+        errorUtils: typeof ErrorUtils === 'undefined' ? undefined : ErrorUtils,
+        fetchHost: globalThis,
+      },
+      apiUrl,
+    )
+  }, [preview, apiUrl])
+
+  useEffect(() => {
+    if (preview) diagnostics.recordScreen(pathname)
+  }, [preview, pathname])
 
   if (!preview || (Platform.OS !== 'ios' && Platform.OS !== 'android')) return null
 
@@ -96,6 +126,7 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
                 platform: Platform.OS as 'ios' | 'android',
                 route: pathname,
                 device: deviceInfo(),
+                diagnostics: diagnostics.snapshot(),
                 ...(controller.lastScenarioId() ? { scenarioId: controller.lastScenarioId() } : {}),
               },
               { apiUrl },

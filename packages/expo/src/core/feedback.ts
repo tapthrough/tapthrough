@@ -1,4 +1,5 @@
 import type { Platform } from '@tapthrough/protocol'
+import type { Diagnostics } from './diagnostics.js'
 
 /** Which PR build is running, read from the loaded EAS update's manifest. */
 export interface PreviewContext {
@@ -63,6 +64,7 @@ export interface FeedbackInput {
   scenarioId?: string
   device?: { os?: string; osVersion?: string; model?: string }
   screenshot?: { contentType: 'image/jpeg' | 'image/png'; base64: string }
+  diagnostics?: Diagnostics
 }
 
 export type FeedbackResult = { ok: true; commentUrl: string } | { ok: false; message: string }
@@ -89,6 +91,7 @@ export async function sendFeedback(
         ...(input.scenarioId ? { scenarioId: input.scenarioId } : {}),
         ...(input.device ? { device: input.device } : {}),
         ...(input.screenshot ? { screenshot: input.screenshot } : {}),
+        ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
       }),
     })
   } catch {
