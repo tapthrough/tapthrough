@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { previewContextFromManifest, scenarioIdFromToken, sendFeedback } from './feedback.js'
+import {
+  failedStepBody,
+  fetchChecklist,
+  previewContextFromManifest,
+  scenarioIdFromToken,
+  sendFeedback,
+  sendStepResult,
+} from './feedback.js'
 
 describe('previewContextFromManifest', () => {
   it('reads the update group and branch from an EAS update manifest', () => {
@@ -88,5 +95,60 @@ describe('sendFeedback', () => {
       ok: false,
       message: expect.stringContaining("Couldn't reach Tapthrough"),
     })
+  })
+})
+
+describe('checklist', () => {
+  const preview = { updateGroupId: 'g1', projectId: 'p1', branch: 'pr-1' }
+
+  it('fetches the checklist for the running build, or null when there is none', async () => {
+    const checklist = { pr: 1, sha: 'abc', open: true, scenarios: [] }
+    const ok = vi.fn(async (_url: string | URL | Request) => Response.json(checklist))
+    expect(await fetchChecklist(preview, 'ios', { apiUrl: 'https://t/', fetch: ok })).toEqual(
+      checklist,
+    )
+    expect(String(ok.mock.calls[0]?.[0])).toBe(
+      'https://t/api/v1/checklist?updateGroupId=g1&projectId=p1&platform=ios',
+    )
+    const missing = vi.fn(async () => new Response('', { status: 404 }))
+    expect(await fetchChecklist(preview, 'ios', { apiUrl: 'https://t', fetch: missing })).toBeNull()
+  })
+
+  it('posts a step result with the finding it links to', async () => {
+    const fetch = vi.fn(
+      async (_url: string | URL | Request, _init?: RequestInit) =>
+        new Response(null, { status: 204 }),
+    )
+    const result = await sendStepResult(
+      {
+        preview,
+        platform: 'android',
+        scenarioKey: 'edit',
+        stepIndex: 1,
+        result: 'fail',
+        findingId: 'f1',
+      },
+      { apiUrl: 'https://t', fetch },
+    )
+    expect(result).toEqual({ ok: true })
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
+      apiVersion: 1,
+      updateGroupId: 'g1',
+      projectId: 'p1',
+      platform: 'android',
+      scenarioKey: 'edit',
+      stepIndex: 1,
+      result: 'fail',
+      findingId: 'f1',
+    })
+  })
+
+  it('writes the failed step and expectation above the note', () => {
+    expect(
+      failedStepBody({ action: 'Tap Save', expect: 'Error shows' }, '  Nothing happens '),
+    ).toBe('Step failed: Tap Save\nExpected: Error shows\n\nNothing happens')
+    expect(failedStepBody({ action: 'Tap Save', expect: 'Error shows' }, '')).toBe(
+      'Step failed: Tap Save\nExpected: Error shows',
+    )
   })
 })

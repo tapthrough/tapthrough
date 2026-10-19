@@ -17,7 +17,16 @@ import {
   View,
 } from 'react-native'
 import { createDiagnostics, installDiagnostics } from './core/diagnostics.js'
-import { previewContextFromManifest, sendFeedback } from './core/feedback.js'
+import {
+  type Checklist,
+  type ChecklistStep,
+  failedStepBody,
+  fetchChecklist,
+  previewContextFromManifest,
+  type StepResultValue,
+  sendFeedback,
+  sendStepResult,
+} from './core/feedback.js'
 import { controller } from './runtime.js'
 import { captureScreenshot, type Screenshot } from './screenshot.js'
 
@@ -57,14 +66,24 @@ function nextFrame() {
   )
 }
 
+interface FailingStep {
+  scenarioKey: string
+  step: ChecklistStep
+}
+
 /**
- * A small Report button over a PR preview. It screenshots the screen (with
- * itself hidden), then opens a composer that posts the note to the PR.
+ * A small Review button over a PR preview. It opens the PR's checklist (pass or
+ * fail each step) or, without a plan, goes straight to reporting an issue with
+ * a screenshot of the screen behind it.
  */
 export function ReportButton({ apiUrl }: { apiUrl: string }) {
   const preview = useMemo(() => previewContextFromManifest(Constants.manifest2), [])
   const pathname = usePathname()
-  const [phase, setPhase] = useState<'idle' | 'capturing' | 'composing'>('idle')
+  const [phase, setPhase] = useState<'idle' | 'loading' | 'checklist' | 'capturing' | 'composing'>(
+    'idle',
+  )
+  const [checklist, setChecklist] = useState<Checklist | null>(null)
+  const [failing, setFailing] = useState<FailingStep | null>(null)
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null)
 
   // Only PR previews record diagnostics; regular builds are never hooked.
@@ -87,8 +106,22 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
   }, [preview, pathname])
 
   if (!preview || (Platform.OS !== 'ios' && Platform.OS !== 'android')) return null
+  const platform = Platform.OS as 'ios' | 'android'
 
   async function open() {
+    setPhase('loading')
+    const list = await fetchChecklist(preview as NonNullable<typeof preview>, platform, { apiUrl })
+    if (list?.scenarios.some((scenario) => scenario.steps.length > 0)) {
+      setChecklist(list)
+      setPhase('checklist')
+    } else {
+      await startReport(null)
+    }
+  }
+
+  /** Hides everything, screenshots the app, then opens the composer. */
+  async function startReport(step: FailingStep | null) {
+    setFailing(step)
     setPhase('capturing')
     await nextFrame()
     setScreenshot(await captureScreenshot())
@@ -98,32 +131,61 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
   function close() {
     setPhase('idle')
     setScreenshot(null)
+    setFailing(null)
   }
 
   return (
     <>
-      {phase === 'idle' ? (
+      {phase === 'idle' || phase === 'loading' ? (
         <Pressable
           onPress={open}
+          disabled={phase === 'loading'}
           style={({ pressed }) => [styles.pill, pressed && styles.pressed]}
           accessibilityRole="button"
-          accessibilityLabel="Report an issue with this pull request"
+          accessibilityLabel="Review this pull request: check off steps or report an issue"
           hitSlop={8}
         >
-          <Text style={styles.pillText}>Report</Text>
+          {phase === 'loading' ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <Text style={styles.pillText}>Review</Text>
+          )}
         </Pressable>
+      ) : null}
+      {phase === 'checklist' && checklist ? (
+        <ReviewSheet
+          checklist={checklist}
+          onResult={(scenarioKey, step, result) =>
+            sendStepResult(
+              {
+                preview,
+                platform,
+                scenarioKey,
+                stepIndex: step.index,
+                result,
+                ...(rememberedName ? { reporterName: rememberedName } : {}),
+              },
+              { apiUrl },
+            )
+          }
+          onFail={(scenarioKey, step) => startReport({ scenarioKey, step })}
+          onReportOther={() => startReport(null)}
+          onClose={close}
+        />
       ) : null}
       {phase === 'composing' ? (
         <Composer
           screenshot={screenshot}
           route={pathname}
           branch={preview.branch}
-          onSend={(input) =>
-            sendFeedback(
+          failedStep={failing?.step ?? null}
+          onSend={async (input) => {
+            const result = await sendFeedback(
               {
                 ...input,
+                body: failing ? failedStepBody(failing.step, input.body) : input.body,
                 preview,
-                platform: Platform.OS as 'ios' | 'android',
+                platform,
                 route: pathname,
                 device: deviceInfo(),
                 diagnostics: diagnostics.snapshot(),
@@ -131,11 +193,153 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
               },
               { apiUrl },
             )
-          }
+            if (result.ok && failing) {
+              await sendStepResult(
+                {
+                  preview,
+                  platform,
+                  scenarioKey: failing.scenarioKey,
+                  stepIndex: failing.step.index,
+                  result: 'fail',
+                  ...(input.reporterName ? { reporterName: input.reporterName } : {}),
+                  ...(result.findingId ? { findingId: result.findingId } : {}),
+                },
+                { apiUrl },
+              )
+            }
+            return result
+          }}
           onClose={close}
         />
       ) : null}
     </>
+  )
+}
+
+const RESULT_LABEL: Record<StepResultValue, string> = {
+  pass: 'Passed',
+  fail: 'Failed',
+  skip: 'Skipped',
+}
+
+/** The PR's test plan: pass or fail each step; failing one files a report about it. */
+function ReviewSheet({
+  checklist,
+  onResult,
+  onFail,
+  onReportOther,
+  onClose,
+}: {
+  checklist: Checklist
+  onResult: (
+    scenarioKey: string,
+    step: ChecklistStep,
+    result: StepResultValue,
+  ) => ReturnType<typeof sendStepResult>
+  onFail: (scenarioKey: string, step: ChecklistStep) => void
+  onReportOther: () => void
+  onClose: () => void
+}) {
+  const [name, setName] = useState(rememberedName)
+  const [results, setResults] = useState<Record<string, StepResultValue | undefined>>(() =>
+    Object.fromEntries(
+      checklist.scenarios.flatMap((scenario) =>
+        scenario.steps.map((step) => [`${scenario.key}:${step.index}`, step.result?.result]),
+      ),
+    ),
+  )
+  const [error, setError] = useState<string | null>(null)
+
+  async function pass(scenarioKey: string, step: ChecklistStep) {
+    rememberedName = name.trim()
+    const id = `${scenarioKey}:${step.index}`
+    const previous = results[id]
+    setResults((current) => ({ ...current, [id]: 'pass' }))
+    const result = await onResult(scenarioKey, step, 'pass')
+    if (!result.ok) {
+      setResults((current) => ({ ...current, [id]: previous }))
+      setError(result.message)
+    }
+  }
+
+  function fail(scenarioKey: string, step: ChecklistStep) {
+    rememberedName = name.trim()
+    onFail(scenarioKey, step)
+  }
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.backdrop}>
+        <View style={styles.sheet}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
+            <View style={styles.headerRow}>
+              <Text style={styles.title}>Review PR #{checklist.pr}</Text>
+              <Pressable onPress={onClose} accessibilityRole="button" hitSlop={8}>
+                <Text style={styles.link}>Close</Text>
+              </Pressable>
+            </View>
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="Your name (shown on the PR)"
+              placeholderTextColor="#8a8f98"
+              autoCapitalize="words"
+              style={styles.input}
+              accessibilityLabel="Your name"
+            />
+            {checklist.scenarios.map((scenario) => (
+              <View key={scenario.key} style={styles.scenario}>
+                <Text style={styles.scenarioTitle}>{scenario.title}</Text>
+                {scenario.steps.map((step) => {
+                  const current = results[`${scenario.key}:${step.index}`]
+                  return (
+                    <View key={step.index} style={styles.step}>
+                      <Text style={styles.stepAction}>{step.action}</Text>
+                      <Text style={styles.muted}>Expect: {step.expect}</Text>
+                      <View style={styles.stepActions}>
+                        {current ? (
+                          <Text style={[styles.stepStatus, current === 'fail' && styles.error]}>
+                            {RESULT_LABEL[current]}
+                          </Text>
+                        ) : (
+                          <View />
+                        )}
+                        <View style={styles.stepButtons}>
+                          <Pressable
+                            onPress={() => fail(scenario.key, step)}
+                            style={[styles.small, styles.smallFail]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Fail: ${step.action}`}
+                          >
+                            <Text style={styles.smallFailText}>Fail</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => pass(scenario.key, step)}
+                            style={[styles.small, styles.smallPass]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Pass: ${step.action}`}
+                          >
+                            <Text style={styles.smallPassText}>Pass</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    </View>
+                  )
+                })}
+              </View>
+            ))}
+            {error ? (
+              <Text style={styles.error} accessibilityRole="alert">
+                {error}
+              </Text>
+            ) : null}
+            <Pressable onPress={onReportOther} accessibilityRole="button" style={styles.other}>
+              <Text style={styles.link}>Report something else</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   )
 }
 
@@ -149,12 +353,15 @@ function Composer({
   screenshot,
   route,
   branch,
+  failedStep,
   onSend,
   onClose,
 }: {
   screenshot: Screenshot | null
   route: string
   branch: string | undefined
+  /** Set when the reviewer failed a step; the note becomes optional. */
+  failedStep: ChecklistStep | null
   onSend: (input: {
     body: string
     reporterName?: string
@@ -167,6 +374,7 @@ function Composer({
   const [includeScreenshot, setIncludeScreenshot] = useState(screenshot !== null)
   const [status, setStatus] = useState<Status>({ kind: 'editing' })
   const pr = branch?.match(/^pr-(\d+)$/)?.[1]
+  const canSend = (failedStep !== null || body.trim() !== '') && status.kind !== 'sending'
 
   async function send() {
     rememberedName = name.trim()
@@ -208,7 +416,15 @@ function Composer({
             </View>
           ) : (
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
-              <Text style={styles.title}>Report an issue{pr ? ` on PR #${pr}` : ''}</Text>
+              <Text style={styles.title}>
+                {failedStep ? 'Step failed' : `Report an issue${pr ? ` on PR #${pr}` : ''}`}
+              </Text>
+              {failedStep ? (
+                <View style={styles.failedStep}>
+                  <Text style={styles.stepAction}>{failedStep.action}</Text>
+                  <Text style={styles.muted}>Expected: {failedStep.expect}</Text>
+                </View>
+              ) : null}
               <Text style={styles.muted} numberOfLines={1}>
                 On {route}
               </Text>
@@ -229,7 +445,11 @@ function Composer({
               <TextInput
                 value={body}
                 onChangeText={setBody}
-                placeholder="What's wrong? What did you expect?"
+                placeholder={
+                  failedStep
+                    ? 'What happened instead? (optional)'
+                    : "What's wrong? What did you expect?"
+                }
                 placeholderTextColor="#8a8f98"
                 multiline
                 autoFocus
@@ -256,11 +476,8 @@ function Composer({
                 </Pressable>
                 <Pressable
                   onPress={send}
-                  disabled={!body.trim() || status.kind === 'sending'}
-                  style={[
-                    styles.primary,
-                    (!body.trim() || status.kind === 'sending') && styles.disabled,
-                  ]}
+                  disabled={!canSend}
+                  style={[styles.primary, !canSend && styles.disabled]}
                   accessibilityRole="button"
                 >
                   {status.kind === 'sending' ? (
@@ -334,4 +551,29 @@ const styles = StyleSheet.create({
   },
   primaryText: { color: '#ffffff', fontSize: 16, fontWeight: '600' },
   disabled: { opacity: 0.4 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  scenario: { gap: 10, marginTop: 4 },
+  scenarioTitle: { fontSize: 15, fontWeight: '700', color: '#16181d' },
+  step: {
+    gap: 4,
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#f4f5f7',
+  },
+  stepAction: { fontSize: 15, fontWeight: '600', color: '#16181d' },
+  stepActions: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  stepButtons: { flexDirection: 'row', gap: 8 },
+  stepStatus: { fontSize: 13, fontWeight: '600', color: '#1e7e34' },
+  small: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8 },
+  smallPass: { backgroundColor: '#1e7e34' },
+  smallPassText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
+  smallFail: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#c5221f' },
+  smallFailText: { color: '#c5221f', fontSize: 14, fontWeight: '600' },
+  other: { alignSelf: 'center', paddingVertical: 12 },
+  failedStep: { gap: 2, padding: 10, borderRadius: 8, backgroundColor: '#fdecea' },
 })

@@ -67,7 +67,9 @@ export interface FeedbackInput {
   diagnostics?: Diagnostics
 }
 
-export type FeedbackResult = { ok: true; commentUrl: string } | { ok: false; message: string }
+export type FeedbackResult =
+  | { ok: true; commentUrl: string; findingId?: string }
+  | { ok: false; message: string }
 
 /** Posts a report to Tapthrough, which comments it on the PR. Never throws. */
 export async function sendFeedback(
@@ -98,8 +100,98 @@ export async function sendFeedback(
     return { ok: false, message: "Couldn't reach Tapthrough. Check your connection and try again." }
   }
   const body = (await response.json().catch(() => undefined)) as
-    | { commentUrl?: string; error?: { message?: string } }
+    | { commentUrl?: string; findingId?: string; error?: { message?: string } }
     | undefined
-  if (response.ok && body?.commentUrl) return { ok: true, commentUrl: body.commentUrl }
+  if (response.ok && body?.commentUrl) {
+    return {
+      ok: true,
+      commentUrl: body.commentUrl,
+      ...(body.findingId ? { findingId: body.findingId } : {}),
+    }
+  }
   return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
+}
+
+export type StepResultValue = 'pass' | 'fail' | 'skip'
+
+export interface ChecklistStep {
+  index: number
+  action: string
+  expect: string
+  result: { result: StepResultValue; reporter: string | null; platform: Platform } | null
+}
+
+export interface Checklist {
+  pr: number
+  sha: string
+  open: boolean
+  scenarios: { key: string; title: string; routePath: string; steps: ChecklistStep[] }[]
+}
+
+/** The PR's test plan and current results for the running build, or null if there isn't one. */
+export async function fetchChecklist(
+  preview: PreviewContext,
+  platform: Platform,
+  options: { apiUrl: string; fetch?: typeof fetch },
+): Promise<Checklist | null> {
+  const doFetch = options.fetch ?? fetch
+  const query = new URLSearchParams({
+    updateGroupId: preview.updateGroupId,
+    projectId: preview.projectId,
+    platform,
+  })
+  try {
+    const response = await doFetch(`${options.apiUrl.replace(/\/$/, '')}/api/v1/checklist?${query}`)
+    if (!response.ok) return null
+    return (await response.json()) as Checklist
+  } catch {
+    return null
+  }
+}
+
+/** Records a pass, fail or skip for one step. Never throws. */
+export async function sendStepResult(
+  input: {
+    preview: PreviewContext
+    platform: Platform
+    scenarioKey: string
+    stepIndex: number
+    result: StepResultValue
+    reporterName?: string
+    findingId?: string
+  },
+  options: { apiUrl: string; fetch?: typeof fetch },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const doFetch = options.fetch ?? fetch
+  try {
+    const response = await doFetch(`${options.apiUrl.replace(/\/$/, '')}/api/v1/step-results`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiVersion: 1,
+        updateGroupId: input.preview.updateGroupId,
+        projectId: input.preview.projectId,
+        platform: input.platform,
+        scenarioKey: input.scenarioKey,
+        stepIndex: input.stepIndex,
+        result: input.result,
+        ...(input.reporterName ? { reporterName: input.reporterName } : {}),
+        ...(input.findingId ? { findingId: input.findingId } : {}),
+      }),
+    })
+    if (response.ok) return { ok: true }
+    const body = (await response.json().catch(() => undefined)) as
+      | { error?: { message?: string } }
+      | undefined
+    return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
+  } catch {
+    return { ok: false, message: "Couldn't reach Tapthrough. Check your connection and try again." }
+  }
+}
+
+/** The report body for a failed step: the step and its expectation, then the reviewer's note. */
+export function failedStepBody(step: { action: string; expect: string }, note: string): string {
+  const parts = [`Step failed: ${step.action}`, `Expected: ${step.expect}`]
+  if (note.trim()) parts.push('', note.trim())
+  return parts.join('\n')
 }
