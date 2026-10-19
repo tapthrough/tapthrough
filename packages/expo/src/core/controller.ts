@@ -1,3 +1,4 @@
+import { scenarioIdFromToken } from './feedback.js'
 import { type LaunchDeps, type LaunchError, runLaunch } from './launch.js'
 import { parseLaunchUrl } from './url.js'
 
@@ -43,6 +44,7 @@ export function createLaunchController() {
   const deps = slot<ControllerDeps>()
   const navigator = slot<Navigate>()
   let running = false
+  let lastScenarioId: string | undefined
 
   function setState(next: LaunchState) {
     state = next
@@ -60,6 +62,7 @@ export function createLaunchController() {
           ...current,
           navigate: async (path) => (await navigator.get())(path),
         })
+        if (result.ok) lastScenarioId = scenarioIdFromToken(token)
         setState(
           result.ok
             ? { status: 'done', path: result.path }
@@ -93,6 +96,8 @@ export function createLaunchController() {
       if (state.status === 'error' || state.status === 'done') setState({ status: 'idle' })
     },
     getState: () => state,
+    /** The scenario the app was last launched into, for attributing reports. */
+    lastScenarioId: () => lastScenarioId,
     subscribe(listener: () => void) {
       listeners.add(listener)
       return () => {

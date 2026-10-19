@@ -4,6 +4,7 @@ import { type ReactNode, useEffect } from 'react'
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import { setFlagOverrides } from './core/flags.js'
 import type { AuthAdapter, ResetTarget } from './core/launch.js'
+import { ReportButton } from './Feedback.js'
 import { useLaunchState } from './hooks.js'
 import { controller, pluginConfig } from './runtime.js'
 
@@ -17,6 +18,10 @@ export interface TapthroughProps {
   seedHookUrl?: string
   /** Overrides the config plugin's `enabled`. Off unless one of them turns it on. */
   enabled?: boolean
+  /** Shows the Report button on PR previews. Defaults to true. */
+  feedback?: boolean
+  /** Overrides the config plugin's `apiUrl`, where reports are sent. */
+  apiUrl?: string
 }
 
 /**
@@ -24,7 +29,15 @@ export interface TapthroughProps {
  * Tapthrough link, it seeds the test user, logs in, applies flags and opens
  * the scenario's screen. Otherwise it renders `children` and does nothing.
  */
-export function Tapthrough({ children, auth, reset, seedHookUrl, enabled }: TapthroughProps) {
+export function Tapthrough({
+  children,
+  auth,
+  reset,
+  seedHookUrl,
+  enabled,
+  feedback = true,
+  apiUrl,
+}: TapthroughProps) {
   const config = pluginConfig()
   const isEnabled = enabled ?? config.enabled
   const hookUrl = seedHookUrl ?? config.seedHookUrl
@@ -73,6 +86,7 @@ export function Tapthrough({ children, auth, reset, seedHookUrl, enabled }: Tapt
   return (
     <>
       {children}
+      {isEnabled && feedback ? <ReportButton apiUrl={apiUrl ?? config.apiUrl} /> : null}
       {isEnabled ? <LaunchOverlay /> : null}
     </>
   )

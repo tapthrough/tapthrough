@@ -3,6 +3,8 @@ export interface TapthroughPluginProps {
   enabled?: boolean
   /** Your seed hook, e.g. `https://<ref>.supabase.co/functions/v1/tapthrough-seed`. */
   seedHookUrl?: string
+  /** Tapthrough's base URL, where in-app reports go. Defaults to `https://tapthrough.dev`. */
+  apiUrl?: string
 }
 
 type ExpoConfig = { scheme?: string | string[]; extra?: Record<string, unknown> } & Record<
@@ -15,7 +17,7 @@ declare function withTapthrough<T extends ExpoConfig>(
   props?: TapthroughPluginProps,
 ): T & {
   extra: NonNullable<T['extra']> & {
-    tapthrough: { enabled: boolean; seedHookUrl: string | undefined }
+    tapthrough: { enabled: boolean; seedHookUrl: string | undefined; apiUrl?: string }
   }
 }
 

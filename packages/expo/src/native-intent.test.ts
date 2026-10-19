@@ -27,6 +27,10 @@ describe('redirectSystemPath', () => {
 describe('pluginConfig', () => {
   it('is disabled when the plugin is missing', async () => {
     const { pluginConfig } = await import('./runtime.js')
-    expect(pluginConfig()).toEqual({ enabled: false, seedHookUrl: undefined })
+    expect(pluginConfig()).toEqual({
+      enabled: false,
+      seedHookUrl: undefined,
+      apiUrl: 'https://tapthrough.dev',
+    })
   })
 })

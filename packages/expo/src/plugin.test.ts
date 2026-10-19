@@ -14,7 +14,7 @@ describe('config plugin', () => {
     const config = withTapthrough(base, { seedHookUrl })
     expect(config.extra).toEqual({
       eas: { projectId: 'p' },
-      tapthrough: { enabled: true, seedHookUrl },
+      tapthrough: { enabled: true, seedHookUrl, apiUrl: 'https://tapthrough.dev' },
     })
   })
 

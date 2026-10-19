@@ -10,11 +10,12 @@
  * Keep `enabled` false for store builds: the SDK ignores launch links unless it's on.
  *
  * @param {{ expo?: unknown } & Record<string, any>} config
- * @param {{ enabled?: boolean, seedHookUrl?: string }} [props]
+ * @param {{ enabled?: boolean, seedHookUrl?: string, apiUrl?: string }} [props]
  */
 function withTapthrough(config, props = {}) {
   const enabled = props.enabled ?? true
   const seedHookUrl = props.seedHookUrl
+  const apiUrl = props.apiUrl ?? 'https://tapthrough.dev'
 
   if (enabled) {
     if (!seedHookUrl) {
@@ -23,6 +24,11 @@ function withTapthrough(config, props = {}) {
     if (!isAllowedUrl(seedHookUrl)) {
       throw new Error(
         `[@tapthrough/expo] \`seedHookUrl\` must be https (http is allowed only for localhost): ${seedHookUrl}`,
+      )
+    }
+    if (!isAllowedUrl(apiUrl)) {
+      throw new Error(
+        `[@tapthrough/expo] \`apiUrl\` must be https (http is allowed only for localhost): ${apiUrl}`,
       )
     }
     if (!config.scheme) {
@@ -36,7 +42,7 @@ function withTapthrough(config, props = {}) {
     ...config,
     extra: {
       ...config.extra,
-      tapthrough: { enabled, seedHookUrl: enabled ? seedHookUrl : undefined },
+      tapthrough: enabled ? { enabled, seedHookUrl, apiUrl } : { enabled, seedHookUrl: undefined },
     },
   }
 }
