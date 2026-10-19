@@ -19987,7 +19987,7 @@ async function main() {
       );
     }
     for (const link of body.links ?? []) links.set(link.key, link.url);
-    console.log(`Reported ${update.platform} (${update.updateGroupId}).`);
+    console.log(`Reported ${update.platform}.`);
   }
   const list = [...links].map(([key, url2]) => `- ${key || "This PR"}: ${url2}`).join("\n");
   console.log(`Preview links:

@@ -6,9 +6,11 @@ describe('previewContextFromManifest', () => {
     const manifest = {
       id: 'u1',
       metadata: { updateGroup: '5623cd33-782f-4be7-a00d-f23fa65e3323', branchName: 'pr-1' },
+      extra: { eas: { projectId: 'bbab6a7b-d4b1-476d-8f5b-f2c763581788' } },
     }
     expect(previewContextFromManifest(manifest)).toEqual({
       updateGroupId: '5623cd33-782f-4be7-a00d-f23fa65e3323',
+      projectId: 'bbab6a7b-d4b1-476d-8f5b-f2c763581788',
       branch: 'pr-1',
     })
   })
@@ -17,6 +19,7 @@ describe('previewContextFromManifest', () => {
     expect(previewContextFromManifest(null)).toBeNull()
     expect(previewContextFromManifest({ metadata: {} })).toBeNull()
     expect(previewContextFromManifest({ metadata: { updateGroup: '' } })).toBeNull()
+    expect(previewContextFromManifest({ metadata: { updateGroup: 'g' } })).toBeNull()
   })
 })
 
@@ -38,7 +41,7 @@ describe('scenarioIdFromToken', () => {
 
 describe('sendFeedback', () => {
   const input = {
-    preview: { updateGroupId: 'g1', branch: 'pr-1' },
+    preview: { updateGroupId: 'g1', projectId: 'p1', branch: 'pr-1' },
     platform: 'ios' as const,
     body: 'Counter overlaps the error',
     route: '/notes/n1/edit',
@@ -55,6 +58,7 @@ describe('sendFeedback', () => {
     expect(JSON.parse(String(init?.body))).toEqual({
       apiVersion: 1,
       updateGroupId: 'g1',
+      projectId: 'p1',
       platform: 'ios',
       body: 'Counter overlaps the error',
       route: '/notes/n1/edit',

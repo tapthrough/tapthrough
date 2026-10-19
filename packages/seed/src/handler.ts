@@ -24,6 +24,11 @@ export interface SeedHandlerOptions {
   /** The app ID registered with Tapthrough; tokens for any other app are refused. */
   appId: string
   /**
+   * The GitHub repos (`owner/name`) allowed to seed here. A token from any other
+   * repo is refused before it's redeemed, even if it names this app.
+   */
+  repos: string[]
+  /**
    * This deployment's environment, e.g. `Deno.env.get('TAPTHROUGH_ENV')`. Must be
    * `staging` or `development`, so a misdeployed hook can never create users in production.
    */
@@ -66,6 +71,10 @@ export function createSeedHandler(
   const issuer = (options.issuer ?? DEFAULT_ISSUER).replace(/\/$/, '')
   const doFetch = options.fetch ?? fetch
   let keys = options.keys
+  if (options.repos.length === 0) {
+    throw new Error('[tapthrough] createSeedHandler needs at least one repo in `repos`.')
+  }
+  const allowedRepos = new Set(options.repos.map((repo) => repo.toLowerCase()))
 
   return async (request) => {
     if (request.method !== 'POST') {
@@ -86,6 +95,13 @@ export function createSeedHandler(
 
       keys ??= remoteKeys(`${issuer}/.well-known/jwks.json`)
       const claims = await verify(token, { keys, issuer, appId: options.appId })
+      if (!allowedRepos.has(claims.repo.toLowerCase())) {
+        throw new SeedError(
+          'repo_not_allowed',
+          'This link is from a repo this app does not trust',
+          403,
+        )
+      }
       const scenario = await redeem(token, issuer, doFetch)
 
       const context: SeedContext = {
@@ -109,8 +125,14 @@ export function createSeedHandler(
       )
     } catch (error) {
       if (error instanceof SeedError) return errorResponse(error.code, error.message, error.status)
-      const message = error instanceof Error ? error.message : 'Seeding failed'
-      return errorResponse('seed_failed', message, 500)
+      // Preset errors can carry database details; log them here, not to the caller.
+      const errorId = crypto.randomUUID().slice(0, 8)
+      console.error(`[tapthrough] seeding failed (${errorId})`, error)
+      return errorResponse(
+        'seed_failed',
+        `Seeding failed. Check the seed hook's logs for error ${errorId}.`,
+        500,
+      )
     }
   }
 }

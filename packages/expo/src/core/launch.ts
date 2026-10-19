@@ -1,4 +1,5 @@
 import { ErrorResponse, type Flags, resolveRoute, SeedHookResponse } from '@tapthrough/protocol'
+import { decodeTokenClaims } from './feedback.js'
 
 /** Logs the app in with the session the seed hook created. */
 export interface AuthAdapter {
@@ -10,6 +11,11 @@ export type ResetTarget = () => void | Promise<void>
 
 export interface LaunchDeps {
   seedHookUrl: string
+  /**
+   * The app's own IDs (iOS bundle ID, Android package). A token for any other
+   * app is refused before anything changes, so a stray link can't swap accounts.
+   */
+  expectedAudiences?: string[]
   auth: AuthAdapter
   reset?: ResetTarget[]
   applyFlags?: (flags: Flags) => void
@@ -37,6 +43,14 @@ const fail = (code: string, message: string): LaunchResult => ({
  */
 export async function runLaunch(token: string, deps: LaunchDeps): Promise<LaunchResult> {
   const doFetch = deps.fetch ?? fetch
+
+  if (deps.expectedAudiences?.length) {
+    const aud = decodeTokenClaims(token)?.aud
+    const audiences = Array.isArray(aud) ? aud : [aud]
+    if (!audiences.some((a) => typeof a === 'string' && deps.expectedAudiences?.includes(a))) {
+      return fail('wrong_app', 'This link is for a different app.')
+    }
+  }
 
   let response: Response
   try {

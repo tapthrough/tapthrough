@@ -25,3 +25,13 @@ pnpm lint
 ```
 
 Requires Node 22 and pnpm 10.
+
+## Security notes
+
+- **Run the Action on `pull_request`, never `pull_request_target`.** PRs from forks get no OIDC
+  token, so the Action fails on them. That's deliberate. `pull_request_target` would run the
+  fork's code, including its `app.config.js` and `eas update`, with your `EXPO_TOKEN`.
+- **Keep the SDK off in store builds** (`enabled: false` in the config plugin). It ignores launch
+  links unless enabled, and refuses tokens minted for any other app.
+- **List your repos in the seed hook** (`repos` in `createSeedHandler`). It refuses tokens from any
+  other repo before redeeming them.

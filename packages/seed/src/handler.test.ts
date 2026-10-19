@@ -67,6 +67,7 @@ const userWithNotes = definePreset({
 function handler(overrides: Partial<SeedHandlerOptions> = {}) {
   return createSeedHandler({
     appId,
+    repos: ['acme/notes'],
     environment: 'staging',
     presets: { 'user-with-notes': userWithNotes },
     issuer,
@@ -209,20 +210,42 @@ describe('createSeedHandler', () => {
     expect(missing.body.error.code).toBe('tier_unsupported')
   })
 
-  it("returns the preset's own error message when seeding throws", async () => {
+  it('hides preset errors from the caller and logs them instead', async () => {
     const broken = definePreset({
       description: 'Fails',
       params: z.object({}),
       async seed() {
-        throw new Error('notes table is missing')
+        throw new Error('relation "notes" does not exist at 10.0.0.3')
       },
     })
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     const fetch = api(redeemed({ tier: 2, preset: 'broken' }))
     const { status, body } = await post(handler({ fetch, presets: { broken } }), {
       token: await mint(),
     })
     expect(status).toBe(500)
-    expect(body.error).toEqual({ code: 'seed_failed', message: 'notes table is missing' })
+    expect(body.error.code).toBe('seed_failed')
+    expect(body.error.message).toMatch(
+      /^Seeding failed\. Check the seed hook's logs for error [0-9a-f]{8}\.$/,
+    )
+    const logged = log.mock.calls[0]?.[1]
+    expect(logged).toBeInstanceOf(Error)
+    expect((logged as Error).message).toContain('relation "notes" does not exist')
+    log.mockRestore()
+  })
+
+  it('refuses tokens from repos it does not trust, before redeeming', async () => {
+    const fetch = api({})
+    const { status, body } = await post(handler({ fetch }), {
+      token: await mint({ repo: 'attacker/app' }),
+    })
+    expect(status).toBe(403)
+    expect(body.error.code).toBe('repo_not_allowed')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('needs at least one trusted repo', () => {
+    expect(() => handler({ repos: [] })).toThrow('at least one repo')
   })
 
   it('rejects other methods and malformed bodies', async () => {

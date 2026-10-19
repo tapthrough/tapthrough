@@ -153,6 +153,29 @@ describe('runLaunch', () => {
     })
   })
 
+  it('refuses a token for another app before changing anything', async () => {
+    const encode = (value: object) =>
+      btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    const token = (aud: string) => `${encode({ alg: 'ES256' })}.${encode({ aud, scn: 's' })}.sig`
+
+    const other = deps({ expectedAudiences: ['com.acme.notes', 'com.acme.notes.android'] })
+    expect(await runLaunch(token('com.attacker.app'), other.deps)).toEqual({
+      ok: false,
+      error: { code: 'wrong_app', message: 'This link is for a different app.' },
+    })
+    expect(other.deps.fetch).not.toHaveBeenCalled()
+    expect(other.calls).toEqual([])
+
+    const mine = deps({ expectedAudiences: ['com.acme.notes'] })
+    expect(await runLaunch(token('com.acme.notes'), mine.deps)).toMatchObject({ ok: true })
+    expect(
+      await runLaunch('not-a-jwt', deps({ expectedAudiences: ['com.acme.notes'] }).deps),
+    ).toMatchObject({
+      ok: false,
+      error: { code: 'wrong_app' },
+    })
+  })
+
   it('works without reset targets or a flag handler', async () => {
     const { deps: d } = deps({ reset: undefined, applyFlags: undefined })
     expect(await runLaunch('tok', d)).toMatchObject({ ok: true })

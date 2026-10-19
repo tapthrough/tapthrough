@@ -62,7 +62,7 @@ export const presets = {
 `refs` is what the scenario's route can point at. A route of `/notes/[id]/edit` with
 `id: "$seed.notes[0].id"` opens the first note you created.
 
-If the preset throws, the app shows your error message.
+If the preset throws, the app shows a generic message with an error ID, and the details go to the hook's logs. They can contain database details you don't want reviewers or link holders to see.
 
 ## Deploying as a Supabase edge function
 
@@ -88,6 +88,7 @@ import { presets } from './presets.ts'
 Deno.serve(
   createSeedHandler({
     appId: 'com.acme.notes',
+    repos: ['acme/notes'],
     environment: Deno.env.get('TAPTHROUGH_ENV'),
     issuer: Deno.env.get('TAPTHROUGH_ISSUER'),
     presets,
@@ -111,6 +112,7 @@ Vercel or Node 18+.
 | Option | Required | Description |
 | --- | --- | --- |
 | `appId` | Yes | Your app's ID as registered with Tapthrough. Tokens for other apps are refused. |
+| `repos` | Yes | The GitHub repos (`owner/name`) allowed to seed here. Tokens from other repos are refused before they're redeemed. |
 | `environment` | Yes | Must be `staging` or `development`. Unset or anything else returns `403 not_staging`. |
 | `presets` | Yes | Your presets, by name. |
 | `sharedAccount` | No | `(context) => Promise<{ session }>` for tier 0 scenarios, which log in to a shared account instead of seeding. |
@@ -127,7 +129,8 @@ Errors come back as `{ error: { code, message } }`, and the app shows the messag
 | 409 | `token_used` | The link was already opened. Reopen it from the PR. |
 | 410 | `link_expired` | The PR is closed. |
 | 400 | `unknown_preset`, `invalid_params` | The scenario asked for a preset or params this hook doesn't have. |
-| 500 | `seed_failed` | Your preset threw. |
+| 403 | `repo_not_allowed` | The link came from a repo not in `repos`. |
+| 500 | `seed_failed` | Your preset threw. The response has an error ID; the details are in your logs. |
 | 501 | `tier_unsupported` | Tier 0 without a `sharedAccount`, or tier 1. |
 
 ## License

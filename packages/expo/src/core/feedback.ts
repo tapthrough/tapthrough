@@ -3,6 +3,8 @@ import type { Platform } from '@tapthrough/protocol'
 /** Which PR build is running, read from the loaded EAS update's manifest. */
 export interface PreviewContext {
   updateGroupId: string
+  /** The EAS project the update belongs to; the server checks it against the repo. */
+  projectId: string
   /** The EAS Update branch, e.g. `pr-142`. */
   branch: string | undefined
 }
@@ -13,31 +15,43 @@ export interface PreviewContext {
  * or a Tapthrough link); an embedded or local build has none.
  */
 export function previewContextFromManifest(manifest: unknown): PreviewContext | null {
-  const metadata = (
-    manifest as { metadata?: { updateGroup?: unknown; branchName?: unknown } } | null
-  )?.metadata
+  const m = manifest as {
+    metadata?: { updateGroup?: unknown; branchName?: unknown }
+    extra?: { eas?: { projectId?: unknown } }
+  } | null
+  const metadata = m?.metadata
+  const projectId = m?.extra?.eas?.projectId
   if (typeof metadata?.updateGroup !== 'string' || metadata.updateGroup === '') return null
+  if (typeof projectId !== 'string') return null
   return {
     updateGroupId: metadata.updateGroup,
+    projectId,
     branch: typeof metadata.branchName === 'string' ? metadata.branchName : undefined,
   }
 }
 
-/**
- * The scenario ID (`scn`) from a link token, for attributing reports. Read
- * without verification: the token was already verified by the seed hook and
- * redeemed, and the server checks the ID belongs to the same PR.
- */
-export function scenarioIdFromToken(token: string): string | undefined {
+/** A link token's payload, read without verification (the seed hook and server verify). */
+export function decodeTokenClaims(token: string): Record<string, unknown> | undefined {
   const payload = token.split('.')[1]
   if (!payload) return undefined
   try {
     const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
-    const json = JSON.parse(globalThis.atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')))
-    return typeof json.scn === 'string' ? json.scn : undefined
+    const json: unknown = JSON.parse(
+      globalThis.atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')),
+    )
+    return json && typeof json === 'object' ? (json as Record<string, unknown>) : undefined
   } catch {
     return undefined
   }
+}
+
+/**
+ * The scenario ID (`scn`) from a link token, for attributing reports. The
+ * server checks the ID belongs to the same PR.
+ */
+export function scenarioIdFromToken(token: string): string | undefined {
+  const scn = decodeTokenClaims(token)?.scn
+  return typeof scn === 'string' ? scn : undefined
 }
 
 export interface FeedbackInput {
@@ -67,6 +81,7 @@ export async function sendFeedback(
       body: JSON.stringify({
         apiVersion: 1,
         updateGroupId: input.preview.updateGroupId,
+        projectId: input.preview.projectId,
         platform: input.platform,
         body: input.body,
         ...(input.reporterName ? { reporterName: input.reporterName } : {}),

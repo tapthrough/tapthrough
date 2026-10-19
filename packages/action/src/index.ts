@@ -131,7 +131,8 @@ async function main() {
       )
     }
     for (const link of body.links ?? []) links.set(link.key, link.url)
-    console.log(`Reported ${update.platform} (${update.updateGroupId}).`)
+    // Update group IDs stay out of the log: in public repos, logs are public.
+    console.log(`Reported ${update.platform}.`)
   }
 
   const list = [...links].map(([key, url]) => `- ${key || 'This PR'}: ${url}`).join('\n')

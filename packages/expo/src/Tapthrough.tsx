@@ -1,3 +1,4 @@
+import Constants from 'expo-constants'
 import * as Linking from 'expo-linking'
 import { type Href, router, useRootNavigationState } from 'expo-router'
 import { type ReactNode, useEffect } from 'react'
@@ -49,8 +50,13 @@ export function Tapthrough({
       console.warn('[tapthrough] Enabled without a seedHookUrl; launch links will be ignored.')
       return
     }
+    const config = Constants.expoConfig
+    const audiences = [config?.ios?.bundleIdentifier, config?.android?.package].filter(
+      (id): id is string => typeof id === 'string',
+    )
     controller.configure({
       seedHookUrl: hookUrl,
+      expectedAudiences: audiences,
       auth,
       reset: reset ?? [],
       applyFlags: setFlagOverrides,
