@@ -41,3 +41,18 @@ network requests (with tokens removed), which helps the developer reproduce it.
   and don't need a re-check. **Create issue on GitHub** in the app, or the link under the report, fills in a
   GitHub issue for you to submit.
 - A new push resets the checklist, so the next round of testing starts clean.
+
+## Gate merges on it
+
+Every PR gets a **Tapthrough** check on its latest commit:
+
+| Check | When |
+| --- | --- |
+| Failed | A step failed on this commit, or a report from the PR is broken on it |
+| In progress | Steps aren't all checked yet, or earlier reports and pushed fixes need a re-check |
+| Passed | Every step passed or was skipped on this commit, and every report from the PR is verified fixed |
+| Neutral | No test plan and no reports, so there's nothing to verify |
+
+Reports marked as not from the PR never count. To require it before merging, add **Tapthrough** as a
+required status check in your branch protection rules or ruleset. A new push starts the check over, just as
+it resets the checklist.
