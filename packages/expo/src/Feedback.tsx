@@ -22,9 +22,12 @@ import {
   type ChecklistStep,
   failedStepBody,
   fetchChecklist,
+  hasReviewItems,
   previewContextFromManifest,
+  type RecheckItem,
   type StepResultValue,
   sendFeedback,
+  sendRecheck,
   sendStepResult,
 } from './core/feedback.js'
 import { controller } from './runtime.js'
@@ -111,7 +114,7 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
   async function open() {
     setPhase('loading')
     const list = await fetchChecklist(preview as NonNullable<typeof preview>, platform, { apiUrl })
-    if (list?.scenarios.some((scenario) => scenario.steps.length > 0)) {
+    if (hasReviewItems(list)) {
       setChecklist(list)
       setPhase('checklist')
     } else {
@@ -169,6 +172,18 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
             )
           }
           onFail={(scenarioKey, step) => startReport({ scenarioKey, step })}
+          onRecheck={(findingId, result) =>
+            sendRecheck(
+              {
+                preview,
+                platform,
+                findingId,
+                result,
+                ...(rememberedName ? { reporterName: rememberedName } : {}),
+              },
+              { apiUrl },
+            )
+          }
           onReportOther={() => startReport(null)}
           onClose={close}
         />
@@ -227,6 +242,7 @@ function ReviewSheet({
   checklist,
   onResult,
   onFail,
+  onRecheck,
   onReportOther,
   onClose,
 }: {
@@ -237,6 +253,7 @@ function ReviewSheet({
     result: StepResultValue,
   ) => ReturnType<typeof sendStepResult>
   onFail: (scenarioKey: string, step: ChecklistStep) => void
+  onRecheck: (findingId: string, result: 'fixed' | 'still_broken') => ReturnType<typeof sendRecheck>
   onReportOther: () => void
   onClose: () => void
 }) {
@@ -249,6 +266,17 @@ function ReviewSheet({
     ),
   )
   const [error, setError] = useState<string | null>(null)
+  const [rechecked, setRechecked] = useState<Record<string, 'fixed' | 'still_broken'>>({})
+
+  async function recheck(item: RecheckItem, result: 'fixed' | 'still_broken') {
+    rememberedName = name.trim()
+    setRechecked((current) => ({ ...current, [item.id]: result }))
+    const response = await onRecheck(item.id, result)
+    if (!response.ok) {
+      setRechecked(({ [item.id]: _, ...rest }) => rest)
+      setError(response.message)
+    }
+  }
 
   async function pass(scenarioKey: string, step: ChecklistStep) {
     rememberedName = name.trim()
@@ -287,6 +315,51 @@ function ReviewSheet({
               style={styles.input}
               accessibilityLabel="Your name"
             />
+            {checklist.recheck?.length ? (
+              <View style={styles.scenario}>
+                <Text style={styles.scenarioTitle}>Re-check earlier reports</Text>
+                {checklist.recheck.map((item) => {
+                  const done = rechecked[item.id]
+                  return (
+                    <View key={item.id} style={styles.step}>
+                      <Text style={styles.stepAction}>{item.excerpt}</Text>
+                      <Text style={styles.muted}>
+                        {[item.reporter, `reported on ${item.sha.slice(0, 7)}`]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Text>
+                      <View style={styles.stepActions}>
+                        {done || item.stillBrokenHere ? (
+                          <Text style={[styles.stepStatus, done !== 'fixed' && styles.error]}>
+                            {done === 'fixed' ? 'Fixed' : 'Still broken'}
+                          </Text>
+                        ) : (
+                          <View />
+                        )}
+                        <View style={styles.stepButtons}>
+                          <Pressable
+                            onPress={() => recheck(item, 'still_broken')}
+                            style={[styles.small, styles.smallFail]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Still broken: ${item.excerpt}`}
+                          >
+                            <Text style={styles.smallFailText}>Still broken</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => recheck(item, 'fixed')}
+                            style={[styles.small, styles.smallPass]}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Fixed: ${item.excerpt}`}
+                          >
+                            <Text style={styles.smallPassText}>Fixed</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    </View>
+                  )
+                })}
+              </View>
+            ) : null}
             {checklist.scenarios.map((scenario) => (
               <View key={scenario.key} style={styles.scenario}>
                 <Text style={styles.scenarioTitle}>{scenario.title}</Text>

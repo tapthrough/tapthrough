@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   failedStepBody,
   fetchChecklist,
+  hasReviewItems,
   previewContextFromManifest,
   scenarioIdFromToken,
   sendFeedback,
+  sendRecheck,
   sendStepResult,
 } from './feedback.js'
 
@@ -150,5 +152,49 @@ describe('checklist', () => {
     expect(failedStepBody({ action: 'Tap Save', expect: 'Error shows' }, '')).toBe(
       'Step failed: Tap Save\nExpected: Error shows',
     )
+  })
+})
+
+describe('re-check', () => {
+  const preview = { updateGroupId: 'g1', projectId: 'p1', branch: 'pr-1' }
+
+  it('posts a re-check for one report', async () => {
+    const fetch = vi.fn(
+      async (_url: string | URL | Request, _init?: RequestInit) =>
+        new Response(null, { status: 204 }),
+    )
+    expect(
+      await sendRecheck(
+        { preview, platform: 'ios', findingId: 'f-1', result: 'still_broken', reporterName: 'Sam' },
+        { apiUrl: 'https://t', fetch },
+      ),
+    ).toEqual({ ok: true })
+    expect(String(fetch.mock.calls[0]?.[0])).toBe('https://t/api/v1/findings/f-1/check')
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      result: 'still_broken',
+      reporterName: 'Sam',
+      projectId: 'p1',
+    })
+  })
+
+  it('opens the sheet for steps or reports to re-check, not for an empty plan', () => {
+    const empty = { pr: 1, sha: 's', open: true, scenarios: [] }
+    expect(hasReviewItems(null)).toBe(false)
+    expect(hasReviewItems(empty)).toBe(false)
+    expect(
+      hasReviewItems({
+        ...empty,
+        recheck: [
+          {
+            id: 'f',
+            excerpt: 'x',
+            reporter: null,
+            sha: 'a',
+            platform: 'ios',
+            stillBrokenHere: false,
+          },
+        ],
+      }),
+    ).toBe(true)
   })
 })

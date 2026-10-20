@@ -121,11 +121,68 @@ export interface ChecklistStep {
   result: { result: StepResultValue; reporter: string | null; platform: Platform } | null
 }
 
+/** A report from an earlier commit, to re-check on this build. */
+export interface RecheckItem {
+  id: string
+  excerpt: string
+  reporter: string | null
+  sha: string
+  platform: Platform
+  stillBrokenHere: boolean
+}
+
 export interface Checklist {
   pr: number
   sha: string
   open: boolean
   scenarios: { key: string; title: string; routePath: string; steps: ChecklistStep[] }[]
+  recheck?: RecheckItem[]
+}
+
+/** Whether the Review sheet has anything to show. */
+export function hasReviewItems(checklist: Checklist | null): checklist is Checklist {
+  return Boolean(
+    checklist &&
+      (checklist.scenarios.some((s) => s.steps.length > 0) || (checklist.recheck?.length ?? 0) > 0),
+  )
+}
+
+/** Marks an earlier report fixed or still broken on this build. Never throws. */
+export async function sendRecheck(
+  input: {
+    preview: PreviewContext
+    platform: Platform
+    findingId: string
+    result: 'fixed' | 'still_broken'
+    reporterName?: string
+  },
+  options: { apiUrl: string; fetch?: typeof fetch },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const doFetch = options.fetch ?? fetch
+  try {
+    const response = await doFetch(
+      `${options.apiUrl.replace(/\/$/, '')}/api/v1/findings/${encodeURIComponent(input.findingId)}/check`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiVersion: 1,
+          updateGroupId: input.preview.updateGroupId,
+          projectId: input.preview.projectId,
+          platform: input.platform,
+          result: input.result,
+          ...(input.reporterName ? { reporterName: input.reporterName } : {}),
+        }),
+      },
+    )
+    if (response.ok) return { ok: true }
+    const body = (await response.json().catch(() => undefined)) as
+      | { error?: { message?: string } }
+      | undefined
+    return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
+  } catch {
+    return { ok: false, message: "Couldn't reach Tapthrough. Check your connection and try again." }
+  }
 }
 
 /** The PR's test plan and current results for the running build, or null if there isn't one. */
