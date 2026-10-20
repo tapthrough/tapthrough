@@ -252,6 +252,46 @@ export async function sendCause(
   }
 }
 
+export type FixRequestResult =
+  | { ok: true; status: 'requested' | 'not_set_up' }
+  | { ok: false; message: string }
+
+/** Asks Claude to fix a report on the PR's branch, in the repo's own Actions. Never throws. */
+export async function requestFix(
+  input: {
+    preview: PreviewContext
+    platform: Platform
+    findingId: string
+    reporterName?: string
+  },
+  options: { apiUrl: string; fetch?: typeof fetch },
+): Promise<FixRequestResult> {
+  const doFetch = options.fetch ?? fetch
+  try {
+    const response = await doFetch(
+      `${options.apiUrl.replace(/\/$/, '')}/api/v1/findings/${encodeURIComponent(input.findingId)}/fix`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiVersion: 1,
+          updateGroupId: input.preview.updateGroupId,
+          projectId: input.preview.projectId,
+          platform: input.platform,
+          ...(input.reporterName ? { reporterName: input.reporterName } : {}),
+        }),
+      },
+    )
+    const body = (await response.json().catch(() => undefined)) as
+      | { status?: 'requested' | 'not_set_up'; error?: { message?: string } }
+      | undefined
+    if (response.ok && body?.status) return { ok: true, status: body.status }
+    return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
+  } catch {
+    return { ok: false, message: "Couldn't reach Tapthrough. Check your connection and try again." }
+  }
+}
+
 /** The PR's test plan and current results for the running build, or null if there isn't one. */
 export async function fetchChecklist(
   preview: PreviewContext,

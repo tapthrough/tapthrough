@@ -27,6 +27,7 @@ import {
   hasReviewItems,
   previewContextFromManifest,
   type RecheckItem,
+  requestFix,
   type StepResultValue,
   sendCause,
   sendFeedback,
@@ -233,6 +234,17 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
           onSetCause={(findingId, cause) =>
             sendCause({ preview, platform, findingId, cause }, { apiUrl })
           }
+          onRequestFix={(findingId) =>
+            requestFix(
+              {
+                preview,
+                platform,
+                findingId,
+                ...(rememberedName ? { reporterName: rememberedName } : {}),
+              },
+              { apiUrl },
+            )
+          }
           onClose={close}
         />
       ) : null}
@@ -438,6 +450,7 @@ function Composer({
   failedStep,
   onSend,
   onSetCause,
+  onRequestFix,
   onClose,
 }: {
   screenshot: Screenshot | null
@@ -452,6 +465,7 @@ function Composer({
     annotations?: AnnotationBox[]
   }) => ReturnType<typeof sendFeedback>
   onSetCause: (findingId: string, cause: 'pr' | 'unrelated') => ReturnType<typeof sendCause>
+  onRequestFix: (findingId: string) => ReturnType<typeof requestFix>
   onClose: () => void
 }) {
   const [body, setBody] = useState('')
@@ -504,6 +518,9 @@ function Composer({
                 status.findingId
                   ? (cause) => onSetCause(status.findingId as string, cause)
                   : undefined
+              }
+              onRequestFix={
+                status.findingId ? () => onRequestFix(status.findingId as string) : undefined
               }
               onClose={onClose}
             />
@@ -621,15 +638,31 @@ function Sent({
   commentUrl,
   triage,
   onSetCause,
+  onRequestFix,
   onClose,
 }: {
   pr: string | undefined
   commentUrl: string
   triage: Triage
   onSetCause: ((cause: 'pr' | 'unrelated') => ReturnType<typeof sendCause>) | undefined
+  onRequestFix: (() => ReturnType<typeof requestFix>) | undefined
   onClose: () => void
 }) {
   const [cause, setCause] = useState(triage.cause)
+  const [fix, setFix] = useState<'idle' | 'asking' | 'requested' | 'not_set_up'>('idle')
+
+  async function askFix() {
+    if (!onRequestFix) return
+    setFix('asking')
+    setError(null)
+    const result = await onRequestFix()
+    if (result.ok) {
+      setFix(result.status)
+    } else {
+      setFix('idle')
+      setError(result.message)
+    }
+  }
   const [byReporter, setByReporter] = useState(triage.causeSource === 'reporter')
   const [error, setError] = useState<string | null>(null)
   const where = pr ? `PR #${pr}` : 'the PR'
@@ -698,6 +731,32 @@ function Sent({
           <Text style={styles.primaryText}>Create issue on GitHub</Text>
         </Pressable>
       ) : null}
+      {cause === 'pr' && onRequestFix ? (
+        fix === 'requested' ? (
+          <Text style={styles.reason}>
+            Claude is looking into it. If it finds the cause, it pushes a fix to the PR, and a new
+            build follows for you to re-check.
+          </Text>
+        ) : fix === 'not_set_up' ? (
+          <Text style={styles.reason}>
+            Fix with Claude isn’t set up on this repo yet. The PR comment has the two setup steps
+            for a developer.
+          </Text>
+        ) : (
+          <Pressable
+            onPress={askFix}
+            disabled={fix === 'asking'}
+            style={[styles.secondary, styles.wide, fix === 'asking' && styles.disabled]}
+            accessibilityRole="button"
+          >
+            {fix === 'asking' ? (
+              <ActivityIndicator color="#1a73e8" />
+            ) : (
+              <Text style={styles.secondaryText}>Ask Claude to fix</Text>
+            )}
+          </Pressable>
+        )
+      ) : null}
       {cause !== 'unknown' && onSetCause ? (
         <Pressable
           onPress={() => choose(cause === 'pr' ? 'unrelated' : 'pr')}
@@ -751,7 +810,7 @@ const styles = StyleSheet.create({
   sent: { padding: 20, paddingBottom: 40, gap: 8 },
   reason: { fontSize: 13, color: '#5b6170', lineHeight: 18 },
   causeRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
-  wide: { alignSelf: 'stretch', alignItems: 'center', marginTop: 4 },
+  wide: { flex: 0, alignSelf: 'stretch', alignItems: 'center', marginTop: 4 },
   title: { fontSize: 18, fontWeight: '700', color: '#16181d' },
   muted: { fontSize: 13, color: '#5f6672' },
   label: { fontSize: 14, color: '#16181d' },

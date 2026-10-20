@@ -4,6 +4,7 @@ import {
   fetchChecklist,
   hasReviewItems,
   previewContextFromManifest,
+  requestFix,
   scenarioIdFromToken,
   sendCause,
   sendFeedback,
@@ -273,5 +274,39 @@ describe('triage in reports', () => {
     )
     expect(url).toBe('https://t.test/api/v1/findings/f%201/cause')
     expect(result).toEqual({ ok: true })
+  })
+})
+
+describe('requestFix', () => {
+  const preview = {
+    updateGroupId: 'g',
+    projectId: '11111111-2222-4333-8444-555555555555',
+    branch: 'pr-1',
+  }
+  it('asks for a fix and passes on the server status or error', async () => {
+    let url = ''
+    const ok = await requestFix(
+      { preview, platform: 'ios', findingId: 'f1', reporterName: 'Priya' },
+      {
+        apiUrl: 'https://t.test',
+        fetch: (async (u: string) => {
+          url = u
+          return new Response(JSON.stringify({ id: 'x', status: 'not_set_up' }), { status: 202 })
+        }) as typeof fetch,
+      },
+    )
+    expect(url).toBe('https://t.test/api/v1/findings/f1/fix')
+    expect(ok).toEqual({ ok: true, status: 'not_set_up' })
+    const limited = await requestFix(
+      { preview, platform: 'ios', findingId: 'f1' },
+      {
+        apiUrl: 'https://t.test',
+        fetch: (async () =>
+          new Response(JSON.stringify({ error: { message: 'Too many' } }), {
+            status: 429,
+          })) as typeof fetch,
+      },
+    )
+    expect(limited).toEqual({ ok: false, message: 'Too many' })
   })
 })

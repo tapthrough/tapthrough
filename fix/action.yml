@@ -1,0 +1,71 @@
+name: Tapthrough Fix
+description: Lets Claude fix a bug a reviewer reported from a Tapthrough preview, and push the fix to the PR
+author: Tapthrough
+branding:
+  icon: tool
+  color: blue
+
+inputs:
+  anthropic-api-key:
+    description: Your Anthropic API key. Claude runs here, on your runner; Tapthrough never sees the key or your code.
+    required: true
+  api-url:
+    description: Tapthrough's base URL; also the audience of the GitHub OIDC token
+    default: https://tapthrough.dev
+  model:
+    description: Claude model to use; leave empty for Claude Code's default
+    default: ''
+  claude-code-version:
+    description: Version of the Claude Code CLI to install
+    default: 2.1.304
+  max-turns:
+    description: Upper bound on the agent's turns, to cap cost
+    default: '40'
+
+runs:
+  using: composite
+  steps:
+    - id: claim
+      name: Get the report from Tapthrough
+      shell: bash
+      env:
+        TAPTHROUGH_API_URL: ${{ inputs.api-url }}
+        FIX_REQUEST_ID: ${{ github.event.client_payload.fix_request_id }}
+      run: node "$GITHUB_ACTION_PATH/fix.mjs" claim
+
+    # The repo's own read-only token clones; credentials aren't kept, so the agent can't push.
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ steps.claim.outputs.head-ref }}
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Prepare the diff and screenshot
+      shell: bash
+      env:
+        TAPTHROUGH_API_URL: ${{ inputs.api-url }}
+      run: node "$GITHUB_ACTION_PATH/fix.mjs" prepare
+
+    - name: Install Claude Code
+      shell: bash
+      env:
+        CLAUDE_CODE_VERSION: ${{ inputs.claude-code-version }}
+      run: npm install --global "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION"
+
+    - id: agent
+      name: Let Claude look into it
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        CLAUDE_MODEL: ${{ inputs.model }}
+        CLAUDE_MAX_TURNS: ${{ inputs.max-turns }}
+      run: node "$GITHUB_ACTION_PATH/fix.mjs" agent
+
+    - name: Push the fix and report back
+      if: always() && steps.claim.outputs.claimed == 'true'
+      shell: bash
+      env:
+        TAPTHROUGH_API_URL: ${{ inputs.api-url }}
+        PUSH_TOKEN: ${{ steps.claim.outputs.push-token }}
+        AGENT_OUTCOME: ${{ steps.agent.outcome }}
+      run: node "$GITHUB_ACTION_PATH/fix.mjs" finish
