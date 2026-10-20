@@ -68,11 +68,30 @@ export interface FeedbackInput {
   diagnostics?: Diagnostics
   /** Boxes drawn on the screenshot; only sent with a screenshot. */
   annotations?: AnnotationBox[]
+  /** The reporter's own call; left out, Tapthrough guesses. */
+  cause?: 'pr' | 'unrelated'
+}
+
+/** Whether a report is caused by the PR: Tapthrough's guess unless a person said. */
+export type Cause = 'pr' | 'unrelated' | 'unknown'
+
+export interface Triage {
+  cause: Cause
+  causeSource: 'guess' | 'reporter' | 'developer'
+  /** Plain-text reasons behind the guess. */
+  reasons: string[]
+  /** GitHub's prefilled new-issue form, for bugs the PR didn't cause. */
+  issueUrl?: string
 }
 
 export type FeedbackResult =
-  | { ok: true; commentUrl: string; findingId?: string }
+  | ({ ok: true; commentUrl: string; findingId?: string } & Partial<Triage>)
   | { ok: false; message: string }
+
+/** Markdown reasons from the server, as plain text for the app. */
+export function plainReason(reason: string): string {
+  return reason.replace(/`([^`]*)`/g, '$1').replace(/\*\*/g, '')
+}
 
 /** Posts a report to Tapthrough, which comments it on the PR. Never throws. */
 export async function sendFeedback(
@@ -100,19 +119,25 @@ export async function sendFeedback(
         ...(input.screenshot && input.annotations?.length
           ? { annotations: input.annotations }
           : {}),
+        ...(input.cause ? { cause: input.cause } : {}),
       }),
     })
   } catch {
     return { ok: false, message: "Couldn't reach Tapthrough. Check your connection and try again." }
   }
   const body = (await response.json().catch(() => undefined)) as
-    | { commentUrl?: string; findingId?: string; error?: { message?: string } }
+    | ({ commentUrl?: string; findingId?: string; error?: { message?: string } } & Partial<Triage>)
     | undefined
   if (response.ok && body?.commentUrl) {
     return {
       ok: true,
       commentUrl: body.commentUrl,
       ...(body.findingId ? { findingId: body.findingId } : {}),
+      // Older servers don't triage; the app then just asks.
+      cause: body.cause ?? 'unknown',
+      causeSource: body.causeSource ?? 'guess',
+      reasons: (body.reasons ?? []).map(plainReason),
+      ...(body.issueUrl ? { issueUrl: body.issueUrl } : {}),
     }
   }
   return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
@@ -178,6 +203,42 @@ export async function sendRecheck(
           platform: input.platform,
           result: input.result,
           ...(input.reporterName ? { reporterName: input.reporterName } : {}),
+        }),
+      },
+    )
+    if (response.ok) return { ok: true }
+    const body = (await response.json().catch(() => undefined)) as
+      | { error?: { message?: string } }
+      | undefined
+    return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
+  } catch {
+    return { ok: false, message: "Couldn't reach Tapthrough. Check your connection and try again." }
+  }
+}
+
+/** The reporter saying whether the PR caused a report. Never throws. */
+export async function sendCause(
+  input: {
+    preview: PreviewContext
+    platform: Platform
+    findingId: string
+    cause: 'pr' | 'unrelated'
+  },
+  options: { apiUrl: string; fetch?: typeof fetch },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const doFetch = options.fetch ?? fetch
+  try {
+    const response = await doFetch(
+      `${options.apiUrl.replace(/\/$/, '')}/api/v1/findings/${encodeURIComponent(input.findingId)}/cause`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiVersion: 1,
+          updateGroupId: input.preview.updateGroupId,
+          projectId: input.preview.projectId,
+          platform: input.platform,
+          cause: input.cause,
         }),
       },
     )

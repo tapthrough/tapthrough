@@ -5,6 +5,7 @@ import {
   hasReviewItems,
   previewContextFromManifest,
   scenarioIdFromToken,
+  sendCause,
   sendFeedback,
   sendRecheck,
   sendStepResult,
@@ -61,7 +62,13 @@ describe('sendFeedback', () => {
       Response.json({ commentUrl: 'https://github.com/a/b/pull/1#c' }, { status: 201 }),
     )
     const result = await sendFeedback(input, { apiUrl: 'https://tapthrough.test/', fetch })
-    expect(result).toEqual({ ok: true, commentUrl: 'https://github.com/a/b/pull/1#c' })
+    expect(result).toEqual({
+      ok: true,
+      commentUrl: 'https://github.com/a/b/pull/1#c',
+      cause: 'unknown',
+      causeSource: 'guess',
+      reasons: [],
+    })
     const [url, init] = fetch.mock.calls[0] ?? []
     expect(url).toBe('https://tapthrough.test/api/v1/feedback')
     expect(JSON.parse(String(init?.body))).toEqual({
@@ -196,5 +203,75 @@ describe('re-check', () => {
         ],
       }),
     ).toBe(true)
+  })
+})
+
+describe('triage in reports', () => {
+  const preview = {
+    updateGroupId: 'g',
+    projectId: '11111111-2222-4333-8444-555555555555',
+    branch: 'pr-1',
+  }
+
+  it('returns the server guess with plain-text reasons, and sends the reporter call', async () => {
+    let sent: Record<string, unknown> = {}
+    const result = await sendFeedback(
+      { preview, platform: 'ios', body: 'Broken', cause: 'unrelated' },
+      {
+        apiUrl: 'https://t.test',
+        fetch: (async (_url: string, init: RequestInit) => {
+          sent = JSON.parse(String(init.body))
+          return new Response(
+            JSON.stringify({
+              commentUrl: 'https://github.com/a/b/pull/1#c',
+              findingId: 'f1',
+              cause: 'unrelated',
+              causeSource: 'reporter',
+              reasons: ['Nothing this PR changes reaches `/settings`.'],
+              issueUrl: 'https://github.com/a/b/issues/new?title=x',
+            }),
+            { status: 201 },
+          )
+        }) as typeof fetch,
+      },
+    )
+    expect(sent.cause).toBe('unrelated')
+    expect(result).toMatchObject({
+      ok: true,
+      cause: 'unrelated',
+      causeSource: 'reporter',
+      reasons: ['Nothing this PR changes reaches /settings.'],
+      issueUrl: 'https://github.com/a/b/issues/new?title=x',
+    })
+  })
+
+  it('treats an older server without triage as unknown', async () => {
+    const result = await sendFeedback(
+      { preview, platform: 'ios', body: 'Broken' },
+      {
+        apiUrl: 'https://t.test',
+        fetch: (async () =>
+          new Response(JSON.stringify({ commentUrl: 'https://x' }), {
+            status: 201,
+          })) as typeof fetch,
+      },
+    )
+    expect(result).toMatchObject({ ok: true, cause: 'unknown', reasons: [] })
+  })
+
+  it('posts a cause change for a finding', async () => {
+    let url = ''
+    const result = await sendCause(
+      { preview, platform: 'android', findingId: 'f 1', cause: 'pr' },
+      {
+        apiUrl: 'https://t.test/',
+        fetch: (async (u: string) => {
+          url = u
+          return new Response(null, { status: 204 })
+        }) as typeof fetch,
+      },
+    )
+    expect(url).toBe('https://t.test/api/v1/findings/f%201/cause')
+    expect(result).toEqual({ ok: true })
   })
 })

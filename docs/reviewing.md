@@ -32,6 +32,12 @@ network requests (with tokens removed), which helps the developer reproduce it.
 - Passed steps get ticked in the Tapthrough comment, with your name and platform.
 - Each report is its own comment with the screenshot, and the main comment lists all reports with their
   status.
-- If a report isn't caused by the PR, use **Open it as a new issue** under the report. It fills in a GitHub
-  issue for you to submit.
+- Tapthrough guesses whether each report comes from the PR, and says why. Reports on a screen the PR changes,
+  or reaches through imports or a layout, count as the PR's. So do console errors that name a changed file.
+  Reports on screens the PR doesn't touch are marked **probably not from this PR**.
+- After sending, the app shows the guess. Tap once to correct it, or to answer when Tapthrough can't tell.
+  A failed step always counts as the PR's.
+- Reports that aren't from the PR are listed apart under **Noticed while testing**. They don't count as open
+  and don't need a re-check. **Create issue on GitHub** in the app, or the link under the report, fills in a
+  GitHub issue for you to submit.
 - A new push resets the checklist, so the next round of testing starts clean.

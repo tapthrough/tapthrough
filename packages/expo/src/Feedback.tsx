@@ -28,9 +28,11 @@ import {
   previewContextFromManifest,
   type RecheckItem,
   type StepResultValue,
+  sendCause,
   sendFeedback,
   sendRecheck,
   sendStepResult,
+  type Triage,
 } from './core/feedback.js'
 import { controller } from './runtime.js'
 import { captureScreenshot, type Screenshot } from './screenshot.js'
@@ -201,6 +203,8 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
               {
                 ...input,
                 body: failing ? failedStepBody(failing.step, input.body) : input.body,
+                // A failed step in the PR's own plan is the PR's to fix.
+                ...(failing ? { cause: 'pr' as const } : {}),
                 preview,
                 platform,
                 route: pathname,
@@ -226,6 +230,9 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
             }
             return result
           }}
+          onSetCause={(findingId, cause) =>
+            sendCause({ preview, platform, findingId, cause }, { apiUrl })
+          }
           onClose={close}
         />
       ) : null}
@@ -421,7 +428,7 @@ function ReviewSheet({
 type Status =
   | { kind: 'editing' }
   | { kind: 'sending' }
-  | { kind: 'sent'; commentUrl: string }
+  | { kind: 'sent'; commentUrl: string; findingId?: string; triage: Triage }
   | { kind: 'error'; message: string }
 
 function Composer({
@@ -430,6 +437,7 @@ function Composer({
   branch,
   failedStep,
   onSend,
+  onSetCause,
   onClose,
 }: {
   screenshot: Screenshot | null
@@ -443,6 +451,7 @@ function Composer({
     screenshot?: Screenshot
     annotations?: AnnotationBox[]
   }) => ReturnType<typeof sendFeedback>
+  onSetCause: (findingId: string, cause: 'pr' | 'unrelated') => ReturnType<typeof sendCause>
   onClose: () => void
 }) {
   const [body, setBody] = useState('')
@@ -464,7 +473,17 @@ function Composer({
     })
     setStatus(
       result.ok
-        ? { kind: 'sent', commentUrl: result.commentUrl }
+        ? {
+            kind: 'sent',
+            commentUrl: result.commentUrl,
+            ...(result.findingId ? { findingId: result.findingId } : {}),
+            triage: {
+              cause: result.cause ?? 'unknown',
+              causeSource: result.causeSource ?? 'guess',
+              reasons: result.reasons ?? [],
+              ...(result.issueUrl ? { issueUrl: result.issueUrl } : {}),
+            },
+          }
         : { kind: 'error', message: result.message },
     )
   }
@@ -477,21 +496,17 @@ function Composer({
       >
         <View style={styles.sheet}>
           {status.kind === 'sent' ? (
-            <View style={styles.sent}>
-              <Text style={styles.title}>Sent to {pr ? `PR #${pr}` : 'the PR'}</Text>
-              <Text style={styles.muted}>Your report is a comment on the pull request now.</Text>
-              <View style={styles.actions}>
-                <Pressable
-                  onPress={() => Linking.openURL(status.commentUrl)}
-                  accessibilityRole="link"
-                >
-                  <Text style={styles.link}>View on GitHub</Text>
-                </Pressable>
-                <Pressable onPress={onClose} style={styles.primary} accessibilityRole="button">
-                  <Text style={styles.primaryText}>Done</Text>
-                </Pressable>
-              </View>
-            </View>
+            <Sent
+              pr={pr}
+              commentUrl={status.commentUrl}
+              triage={status.triage}
+              onSetCause={
+                status.findingId
+                  ? (cause) => onSetCause(status.findingId as string, cause)
+                  : undefined
+              }
+              onClose={onClose}
+            />
           ) : (
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
               <Text style={styles.title}>
@@ -597,6 +612,122 @@ function Composer({
   )
 }
 
+/**
+ * After a report is sent: whether it looks like the PR's bug, and the one tap
+ * that follows. A bug the PR didn't cause goes to a prefilled GitHub issue.
+ */
+function Sent({
+  pr,
+  commentUrl,
+  triage,
+  onSetCause,
+  onClose,
+}: {
+  pr: string | undefined
+  commentUrl: string
+  triage: Triage
+  onSetCause: ((cause: 'pr' | 'unrelated') => ReturnType<typeof sendCause>) | undefined
+  onClose: () => void
+}) {
+  const [cause, setCause] = useState(triage.cause)
+  const [byReporter, setByReporter] = useState(triage.causeSource === 'reporter')
+  const [error, setError] = useState<string | null>(null)
+  const where = pr ? `PR #${pr}` : 'the PR'
+
+  async function choose(next: 'pr' | 'unrelated') {
+    if (!onSetCause) return
+    const previous = cause
+    setCause(next)
+    setByReporter(true)
+    setError(null)
+    const result = await onSetCause(next)
+    if (!result.ok) {
+      setCause(previous)
+      setError(result.message)
+    }
+  }
+
+  const heading =
+    cause === 'pr'
+      ? `Sent to ${where}`
+      : cause === 'unrelated'
+        ? 'Looks like this was already broken'
+        : `Sent to ${where}`
+  const summary =
+    cause === 'pr'
+      ? byReporter
+        ? 'Marked as caused by this PR. The author will see it in the PR.'
+        : 'This looks like it comes from this PR, so it’s on the PR for the author to fix.'
+      : cause === 'unrelated'
+        ? byReporter
+          ? 'Marked as not from this PR. It won’t block the merge; file it so it isn’t lost.'
+          : 'Nothing this PR changes reaches this screen, so it won’t block the merge. File it so it isn’t lost.'
+        : 'Did this PR cause it, or was it already broken?'
+
+  return (
+    <View style={styles.sent}>
+      <Text style={styles.title}>{heading}</Text>
+      <Text style={styles.muted}>{summary}</Text>
+      {!byReporter && triage.reasons.length > 0 ? (
+        <Text style={styles.reason}>{triage.reasons.join(' ')}</Text>
+      ) : null}
+      {cause === 'unknown' && onSetCause ? (
+        <View style={styles.causeRow}>
+          <Pressable
+            onPress={() => choose('pr')}
+            style={styles.secondary}
+            accessibilityRole="button"
+          >
+            <Text style={styles.secondaryText}>This PR caused it</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => choose('unrelated')}
+            style={styles.secondary}
+            accessibilityRole="button"
+          >
+            <Text style={styles.secondaryText}>Already broken</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {cause === 'unrelated' && triage.issueUrl ? (
+        <Pressable
+          onPress={() => Linking.openURL(triage.issueUrl as string)}
+          style={[styles.primary, styles.wide]}
+          accessibilityRole="link"
+        >
+          <Text style={styles.primaryText}>Create issue on GitHub</Text>
+        </Pressable>
+      ) : null}
+      {cause !== 'unknown' && onSetCause ? (
+        <Pressable
+          onPress={() => choose(cause === 'pr' ? 'unrelated' : 'pr')}
+          accessibilityRole="button"
+          hitSlop={8}
+        >
+          <Text style={styles.link}>
+            {cause === 'pr'
+              ? 'Not from this PR? It was already broken'
+              : 'Actually, this PR caused it'}
+          </Text>
+        </Pressable>
+      ) : null}
+      {error ? (
+        <Text style={styles.error} accessibilityRole="alert">
+          {error}
+        </Text>
+      ) : null}
+      <View style={styles.actions}>
+        <Pressable onPress={() => Linking.openURL(commentUrl)} accessibilityRole="link">
+          <Text style={styles.link}>View on GitHub</Text>
+        </Pressable>
+        <Pressable onPress={onClose} style={styles.primary} accessibilityRole="button">
+          <Text style={styles.primaryText}>Done</Text>
+        </Pressable>
+      </View>
+    </View>
+  )
+}
+
 const styles = StyleSheet.create({
   pill: {
     position: 'absolute',
@@ -618,6 +749,9 @@ const styles = StyleSheet.create({
   },
   form: { padding: 20, gap: 12 },
   sent: { padding: 20, paddingBottom: 40, gap: 8 },
+  reason: { fontSize: 13, color: '#5b6170', lineHeight: 18 },
+  causeRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  wide: { alignSelf: 'stretch', alignItems: 'center', marginTop: 4 },
   title: { fontSize: 18, fontWeight: '700', color: '#16181d' },
   muted: { fontSize: 13, color: '#5f6672' },
   label: { fontSize: 14, color: '#16181d' },
@@ -652,6 +786,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a73e8',
   },
   primaryText: { color: '#ffffff', fontSize: 16, fontWeight: '600' },
+  secondary: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#1a73e8',
+  },
+  secondaryText: { color: '#1a73e8', fontSize: 15, fontWeight: '600' },
   disabled: { opacity: 0.4 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   scenario: { gap: 10, marginTop: 4 },
