@@ -1,4 +1,5 @@
 import type { Platform } from '@tapthrough/protocol'
+import type { AnnotationBox } from './annotations.js'
 import type { Diagnostics } from './diagnostics.js'
 
 /** Which PR build is running, read from the loaded EAS update's manifest. */
@@ -65,6 +66,8 @@ export interface FeedbackInput {
   device?: { os?: string; osVersion?: string; model?: string }
   screenshot?: { contentType: 'image/jpeg' | 'image/png'; base64: string }
   diagnostics?: Diagnostics
+  /** Boxes drawn on the screenshot; only sent with a screenshot. */
+  annotations?: AnnotationBox[]
 }
 
 export type FeedbackResult =
@@ -94,6 +97,9 @@ export async function sendFeedback(
         ...(input.device ? { device: input.device } : {}),
         ...(input.screenshot ? { screenshot: input.screenshot } : {}),
         ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
+        ...(input.screenshot && input.annotations?.length
+          ? { annotations: input.annotations }
+          : {}),
       }),
     })
   } catch {

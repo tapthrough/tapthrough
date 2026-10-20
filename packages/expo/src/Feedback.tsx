@@ -16,6 +16,8 @@ import {
   TextInput,
   View,
 } from 'react-native'
+import { Annotator } from './Annotator.js'
+import type { AnnotationBox } from './core/annotations.js'
 import { createDiagnostics, installDiagnostics } from './core/diagnostics.js'
 import {
   type Checklist,
@@ -439,12 +441,15 @@ function Composer({
     body: string
     reporterName?: string
     screenshot?: Screenshot
+    annotations?: AnnotationBox[]
   }) => ReturnType<typeof sendFeedback>
   onClose: () => void
 }) {
   const [body, setBody] = useState('')
   const [name, setName] = useState(rememberedName)
   const [includeScreenshot, setIncludeScreenshot] = useState(screenshot !== null)
+  const [annotations, setAnnotations] = useState<AnnotationBox[]>([])
+  const [annotating, setAnnotating] = useState(false)
   const [status, setStatus] = useState<Status>({ kind: 'editing' })
   const pr = branch?.match(/^pr-(\d+)$/)?.[1]
   const canSend = (failedStep !== null || body.trim() !== '') && status.kind !== 'sending'
@@ -455,7 +460,7 @@ function Composer({
     const result = await onSend({
       body: body.trim(),
       ...(name.trim() ? { reporterName: name.trim() } : {}),
-      ...(includeScreenshot && screenshot ? { screenshot } : {}),
+      ...(includeScreenshot && screenshot ? { screenshot, annotations } : {}),
     })
     setStatus(
       result.ok
@@ -512,8 +517,32 @@ function Composer({
                   <View style={styles.shotToggle}>
                     <Text style={styles.label}>Include screenshot</Text>
                     <Switch value={includeScreenshot} onValueChange={setIncludeScreenshot} />
+                    {includeScreenshot ? (
+                      <Pressable
+                        onPress={() => setAnnotating(true)}
+                        accessibilityRole="button"
+                        hitSlop={8}
+                      >
+                        <Text style={styles.link}>
+                          {annotations.length
+                            ? `Mark up (${annotations.length})`
+                            : 'Mark up: highlight or blur'}
+                        </Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 </View>
+              ) : null}
+              {annotating && screenshot ? (
+                <Annotator
+                  screenshot={screenshot}
+                  initial={annotations}
+                  onDone={(boxes) => {
+                    setAnnotations(boxes)
+                    setAnnotating(false)
+                  }}
+                  onCancel={() => setAnnotating(false)}
+                />
               ) : null}
               <TextInput
                 value={body}
