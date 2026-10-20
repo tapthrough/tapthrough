@@ -4,7 +4,8 @@ import path from 'node:path'
 import { MAX_DIFF_LENGTH, type Manifest, type RunReport } from '@tapthrough/protocol'
 import { parseEasUpdateJson } from './eas.js'
 import { type ExpoInfo, expoInfoFromConfig } from './expo-config.js'
-import { affectedRoutes, routesFromFiles } from './routes.js'
+import { affectedRoutesByImports, aliasesFromTsconfig } from './imports.js'
+import { routesFromFiles } from './routes.js'
 
 function input(name: string): string {
   return (process.env[`INPUT_${name.toUpperCase()}`] ?? '').trim()
@@ -36,6 +37,44 @@ async function oidcToken(audience: string): Promise<string> {
   const { value } = (await response.json()) as { value?: string }
   if (!value) throw new Error('GitHub returned an empty OIDC token.')
   return value
+}
+
+const MAX_SOURCE_FILES = 5000
+const MAX_SOURCE_BYTES = 512 * 1024
+
+/** Routes the changed files reach through imports, read from the app's tracked source files. */
+function traceAffected(
+  root: string,
+  appRoot: string,
+  routes: Manifest['routes'],
+  changedFiles: string[],
+): Manifest['affected'] {
+  if (routes.length === 0 || changedFiles.length === 0) return []
+  const listed = run('git', ['ls-files', '--', appRoot || '.'], root)
+    .split('\n')
+    .filter((file) => /\.(tsx?|jsx?|mjs|cjs)$/.test(file) && !file.includes('node_modules/'))
+    .slice(0, MAX_SOURCE_FILES)
+  const sources = new Map<string, string>()
+  for (const file of listed) {
+    try {
+      const text = readFileSync(path.join(root, file), 'utf8')
+      if (text.length <= MAX_SOURCE_BYTES) sources.set(file, text)
+    } catch {
+      // Deleted in this PR or unreadable; it can't import anything now.
+    }
+  }
+  let tsconfig: string | null = null
+  try {
+    tsconfig = readFileSync(path.join(root, appRoot, 'tsconfig.json'), 'utf8')
+  } catch {
+    tsconfig = null
+  }
+  return affectedRoutesByImports({
+    routes,
+    changedFiles,
+    sources,
+    aliases: aliasesFromTsconfig(tsconfig, appRoot || '.'),
+  })
 }
 
 function buildManifest(
@@ -70,7 +109,7 @@ function buildManifest(
       framework: 'expo-router',
       routes,
       changedFiles,
-      affected: affectedRoutes(routes, changedFiles),
+      affected: traceAffected(root, relative, routes, changedFiles),
       presets: [],
     },
     diff,

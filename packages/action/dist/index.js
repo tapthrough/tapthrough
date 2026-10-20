@@ -8,7 +8,7 @@ var __export = (target, all) => {
 // src/index.ts
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import path from "node:path";
+import path2 from "node:path";
 
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -827,10 +827,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path2) {
-  if (!path2)
+function getElementAtPath(obj, path3) {
+  if (!path3)
     return obj;
-  return path2.reduce((acc, key) => acc?.[key], obj);
+  return path3.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -1170,11 +1170,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path2, issues) {
+function prefixIssues(path3, issues) {
   return issues.map((iss) => {
     var _a3;
     (_a3 = iss).path ?? (_a3.path = []);
-    iss.path.unshift(path2);
+    iss.path.unshift(path3);
     return iss;
   });
 }
@@ -1636,16 +1636,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path2 = []) => {
+  const processError = (error63, path3 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path2, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path3, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path2, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path3, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path2, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path3, ...issue2.path]);
       } else {
-        const fullpath = [...path2, ...issue2.path];
+        const fullpath = [...path3, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -1684,17 +1684,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path2 = []) => {
+  const processError = (error63, path3 = []) => {
     var _a3;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path2, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path3, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path2, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path3, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path2, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path3, ...issue2.path]);
       } else {
-        const fullpath = [...path2, ...issue2.path];
+        const fullpath = [...path3, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1733,8 +1733,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path2 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path2) {
+  const path3 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path3) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -5077,7 +5077,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve) {
+function isRecursive(inst, stack, resolve2) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -5087,7 +5087,7 @@ function isRecursive(inst, stack, resolve) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve);
+      const answer = isRecursive(child, stack, resolve2);
       if (answer > result)
         result = answer;
     }
@@ -5098,7 +5098,7 @@ function isRecursive(inst, stack, resolve) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve2) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -5162,7 +5162,7 @@ function isRecursive(inst, stack, resolve) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve2 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -18872,13 +18872,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path2 = ref.slice(1).split("/").filter(Boolean);
-  if (path2.length === 0) {
+  const path3 = ref.slice(1).split("/").filter(Boolean);
+  if (path3.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path2[0] === defsKey) {
-    const key = path2[1] === void 0 ? void 0 : decodeJSONPointerSegment(path2[1]);
+  if (path3[0] === defsKey) {
+    const key = path3[1] === void 0 ? void 0 : decodeJSONPointerSegment(path3[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -19861,6 +19861,138 @@ function expoInfoFromConfig(config2) {
   return { projectId, slug: c.slug, scheme, ...appId ? { appId } : {} };
 }
 
+// src/imports.ts
+import path from "node:path";
+var SOURCE = /\.(tsx?|jsx?|mjs|cjs)$/;
+var EXTENSIONS = [
+  "",
+  ".tsx",
+  ".ts",
+  ".jsx",
+  ".js",
+  ".ios.tsx",
+  ".android.tsx",
+  ".native.tsx",
+  ".web.tsx"
+];
+var INDEX = ["/index.tsx", "/index.ts", "/index.jsx", "/index.js"];
+function importSpecifiers(source) {
+  const specifiers = /* @__PURE__ */ new Set();
+  const patterns = [
+    /\b(?:import|export)\s[^'"]*?\bfrom\s*['"]([^'"]+)['"]/g,
+    /\bimport\s*['"]([^'"]+)['"]/g,
+    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      if (match[1]) specifiers.add(match[1]);
+    }
+  }
+  return [...specifiers];
+}
+function stripJsonComments(text) {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (inString) {
+      out += char;
+      if (char === "\\") {
+        out += next ?? "";
+        i++;
+      } else if (char === '"') {
+        inString = false;
+      }
+    } else if (char === '"') {
+      inString = true;
+      out += char;
+    } else if (char === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+      out += "\n";
+    } else if (char === "/" && next === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i++;
+    } else {
+      out += char;
+    }
+  }
+  return out.replace(/,(\s*[}\]])/g, "$1");
+}
+function aliasesFromTsconfig(tsconfig, dir) {
+  if (!tsconfig) return [];
+  try {
+    const json2 = JSON.parse(stripJsonComments(tsconfig));
+    const paths = json2?.compilerOptions?.paths ?? {};
+    const baseUrl = String(json2?.compilerOptions?.baseUrl ?? ".");
+    return Object.entries(paths).flatMap(([alias, targets]) => {
+      const target = targets[0];
+      if (!alias.endsWith("/*") || !target?.endsWith("/*")) return [];
+      return [
+        { prefix: alias.slice(0, -1), target: path.posix.join(dir, baseUrl, target.slice(0, -1)) }
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+function resolve(specifier, from, files, aliases) {
+  let base;
+  if (specifier.startsWith(".")) {
+    base = path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier));
+  } else {
+    const alias = aliases.find((a) => specifier.startsWith(a.prefix));
+    if (!alias) return void 0;
+    base = path.posix.normalize(alias.target + specifier.slice(alias.prefix.length));
+  }
+  for (const candidate of [
+    ...EXTENSIONS.map((ext) => base + ext),
+    ...INDEX.map((ext) => base + ext)
+  ]) {
+    if (files.has(candidate)) return candidate;
+  }
+  return void 0;
+}
+function affectedRoutesByImports(input3) {
+  const files = new Set([...input3.sources.keys()].filter((file2) => SOURCE.test(file2)));
+  const importedBy = /* @__PURE__ */ new Map();
+  for (const [file2, source] of input3.sources) {
+    if (!SOURCE.test(file2)) continue;
+    for (const specifier of importSpecifiers(source)) {
+      const target = resolve(specifier, file2, files, input3.aliases);
+      if (!target) continue;
+      if (!importedBy.has(target)) importedBy.set(target, /* @__PURE__ */ new Set());
+      importedBy.get(target)?.add(file2);
+    }
+  }
+  const routeByFile = new Map(input3.routes.map((route) => [route.file, route]));
+  const best = /* @__PURE__ */ new Map();
+  const maxDistance = input3.maxDistance ?? 6;
+  for (const changed of input3.changedFiles) {
+    const seen = /* @__PURE__ */ new Set([changed]);
+    let frontier = [changed];
+    for (let distance = 0; distance <= maxDistance && frontier.length > 0; distance++) {
+      const next = [];
+      for (const file2 of frontier) {
+        const route = routeByFile.get(file2);
+        if (route && (best.get(route.path)?.distance ?? Number.POSITIVE_INFINITY) > distance) {
+          best.set(route.path, { path: route.path, distance, via: changed });
+        }
+        for (const parent of importedBy.get(file2) ?? []) {
+          if (!seen.has(parent)) {
+            seen.add(parent);
+            next.push(parent);
+          }
+        }
+      }
+      frontier = next;
+    }
+  }
+  return [...best.values()].sort((a, b) => a.distance - b.distance || a.path.localeCompare(b.path));
+}
+
 // src/routes.ts
 var SCREEN_FILE = /\.(tsx|ts|jsx|js)$/;
 var PLATFORM_SUFFIX = /\.(ios|android|native|web)$/;
@@ -19875,14 +20007,10 @@ function routesFromFiles(appDir, files) {
     if (name === "" || name.startsWith("(")) continue;
     const urlSegments = segments.filter((s) => !(s.startsWith("(") && s.endsWith(")")));
     if (urlSegments.at(-1) === "index") urlSegments.pop();
-    const path2 = `/${urlSegments.join("/")}`;
-    if (!byPath.has(path2)) byPath.set(path2, { path: path2, file: file2 });
+    const path3 = `/${urlSegments.join("/")}`;
+    if (!byPath.has(path3)) byPath.set(path3, { path: path3, file: file2 });
   }
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
-}
-function affectedRoutes(routes, changedFiles) {
-  const changed = new Set(changedFiles);
-  return routes.filter((route) => changed.has(route.file)).map((route) => ({ path: route.path, distance: 0, via: route.file }));
 }
 
 // src/index.ts
@@ -19913,10 +20041,36 @@ async function oidcToken(audience) {
   if (!value) throw new Error("GitHub returned an empty OIDC token.");
   return value;
 }
+var MAX_SOURCE_FILES = 5e3;
+var MAX_SOURCE_BYTES = 512 * 1024;
+function traceAffected(root, appRoot, routes, changedFiles) {
+  if (routes.length === 0 || changedFiles.length === 0) return [];
+  const listed = run("git", ["ls-files", "--", appRoot || "."], root).split("\n").filter((file2) => /\.(tsx?|jsx?|mjs|cjs)$/.test(file2) && !file2.includes("node_modules/")).slice(0, MAX_SOURCE_FILES);
+  const sources = /* @__PURE__ */ new Map();
+  for (const file2 of listed) {
+    try {
+      const text = readFileSync(path2.join(root, file2), "utf8");
+      if (text.length <= MAX_SOURCE_BYTES) sources.set(file2, text);
+    } catch {
+    }
+  }
+  let tsconfig = null;
+  try {
+    tsconfig = readFileSync(path2.join(root, appRoot, "tsconfig.json"), "utf8");
+  } catch {
+    tsconfig = null;
+  }
+  return affectedRoutesByImports({
+    routes,
+    changedFiles,
+    sources,
+    aliases: aliasesFromTsconfig(tsconfig, appRoot || ".")
+  });
+}
 function buildManifest(workingDir, baseSha, headSha) {
   const root = run("git", ["rev-parse", "--show-toplevel"], workingDir).trim();
-  const relative = path.relative(root, workingDir);
-  const appDir = ["src/app", "app"].map((dir) => path.join(relative, dir)).find((dir) => existsSync(path.join(root, dir)));
+  const relative = path2.relative(root, workingDir);
+  const appDir = ["src/app", "app"].map((dir) => path2.join(relative, dir)).find((dir) => existsSync(path2.join(root, dir)));
   let changedFiles = [];
   let diff = "";
   try {
@@ -19935,18 +20089,18 @@ function buildManifest(workingDir, baseSha, headSha) {
       framework: "expo-router",
       routes,
       changedFiles,
-      affected: affectedRoutes(routes, changedFiles),
+      affected: traceAffected(root, relative, routes, changedFiles),
       presets: []
     },
     diff
   };
 }
 async function main() {
-  const workingDir = path.resolve(input2("working-directory") || ".");
+  const workingDir = path2.resolve(input2("working-directory") || ".");
   const apiUrl = (input2("api-url") || "https://tapthrough.dev").replace(/\/$/, "");
   const updateJson = input2("update-json");
   if (!updateJson) throw new Error("Set `update-json` to the file `eas update --json` wrote.");
-  const updates = parseEasUpdateJson(readFileSync(path.resolve(workingDir, updateJson), "utf8"));
+  const updates = parseEasUpdateJson(readFileSync(path2.resolve(workingDir, updateJson), "utf8"));
   const event = JSON.parse(readFileSync(requiredEnv("GITHUB_EVENT_PATH"), "utf8"));
   if (!event.pull_request) throw new Error("Tapthrough runs on pull_request events.");
   const { number: pr, head, base } = event.pull_request;
