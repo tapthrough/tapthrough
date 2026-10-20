@@ -6,6 +6,12 @@ logged in with the right data, plus a short test plan and one-tap feedback that 
 This repo holds everything that runs on your side: the GitHub Action, the SDK, the seed-hook helper
 and the shared protocol. The hosted service lives in a separate, private repo.
 
+## Docs
+
+- [Getting started](docs/getting-started.md): set up Tapthrough on an Expo app in about 30 minutes
+- [Plan files](docs/plan-files.md): land reviewers on the right screen with test data and a checklist
+- [Reviewing a PR](docs/reviewing.md): for reviewers, including those who don't write code
+
 ## Packages
 
 | Package | Status | Does |
