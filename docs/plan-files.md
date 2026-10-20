@@ -1,12 +1,47 @@
-# Plan files
+# Scenarios and plan files
 
-A plan file tells Tapthrough which screens a PR changes, what state to open them in, and what to test. Put
-it in the PR at `.tapthrough/plans/<pr-number>.json`. Tapthrough reads it at the PR's latest commit, so
-editing it in a new push updates the comment.
+A scenario is one state of your app, written as data: which screen, what test data, which flags, and what to
+check. Tapthrough opens reviewers right on it and gives them the steps as a checklist.
 
-> Plans are written by hand for now. Generating them from the diff and the linked ticket is next.
+## The scenario library
 
-## Example
+Put scenarios in your repo at `.tapthrough/scenarios/<key>.json`, one per file. The file name is the key.
+
+```json
+{
+  "title": "Edit note",
+  "route": { "path": "/notes/[id]/edit", "params": { "id": "$seed.notes[0].id" } },
+  "seed": { "tier": 2, "preset": "user-with-notes", "params": { "count": 3 } },
+  "steps": [
+    { "action": "Clear the title and tap Save", "expect": "\"Title required\" appears under the title" }
+  ]
+}
+```
+
+Each PR runs the scenarios it touches, and the comment says why for each one:
+
+- **Screen changed:** the PR changes the screen's route file.
+- **Reached through imports:** the PR changes a component the screen uses, directly or through other files
+  (for example, `note-form.tsx` reaches `/notes/new` and `/notes/[id]/edit`).
+- **Scenario updated:** the PR changes the scenario file itself.
+
+The rest of the library stays available from the app's Review menu. When none match, the comment says so.
+A few scenarios per screen, written once, cover every PR after that, and agents can write them too, since
+they're plain JSON.
+
+## Per-PR plan files
+
+For something only one PR needs, add `.tapthrough/plans/<pr-number>.json`. It can define scenarios of its
+own and `include` library scenarios that weren't picked automatically:
+
+```json
+{ "include": ["settings"], "scenarios": [ { "key": "new-note-counter", "title": "…", "route": { "path": "/notes/new" }, "seed": { "tier": 2, "preset": "empty-account" } } ] }
+```
+
+A plan scenario with the same key as a library scenario replaces it for that PR. Tapthrough reads the plan
+at the PR's latest commit, so editing it in a new push updates the comment.
+
+## Plan file example
 
 ```json
 {
@@ -30,8 +65,7 @@ editing it in a new push updates the comment.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `scenarios` | Yes | 1 to 5 scenarios |
-| `key` | Yes | Lowercase letters, digits and dashes. Keep it stable across pushes; links and checklist results use it. |
+| `key` | In plan files | The file name in the library. Lowercase letters, digits and dashes. Keep it stable across pushes; links and checklist results use it. |
 | `title` | Yes | Shown in the PR comment and the app, e.g. "Edit note: empty title" |
 | `route.path` | Yes | An Expo Router path, with `[param]` segments |
 | `route.params` | No | Values for the segments. `$seed.<path>` points at data your seed hook returned, e.g. `$seed.notes[0].id`. |
@@ -41,6 +75,6 @@ editing it in a new push updates the comment.
 
 ## What happens when it's wrong
 
-If the file is missing, the comment links to the PR's build without a scenario and suggests adding one. If
-it can't be parsed, the comment says why (for example `duplicate scenario key "edit-note"`) and still links
-to the build.
+A broken library file or plan file never fails the run. The comment names the file and says why (for example
+`key "edit" doesn't match the file name` or `duplicate scenario key "edit-note"`), and the other scenarios
+still run. With no scenarios at all, the comment links to the PR's build and suggests adding some.
