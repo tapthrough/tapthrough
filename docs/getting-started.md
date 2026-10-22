@@ -5,7 +5,9 @@ the PR's code on the right screen, already signed in with test data, plus a chec
 Reviewers, including people who don't write code, check off steps and report issues from inside the app.
 Everything lands back on the PR.
 
-This guide takes about 30 minutes for a typical Expo Router app.
+This guide takes about 30 minutes for a typical Expo Router app. Or hand it to your coding agent: paste
+`Read https://raw.githubusercontent.com/tapthrough/tapthrough/main/docs/onboard-with-your-agent.md and follow
+it step by step` into Claude Code, Cursor or Codex. See [set up with your coding agent](onboard-with-your-agent.md).
 
 > **Early access.** The Action runs from `tapthrough/tapthrough@main` until `v1` is tagged, and the SDK
 > packages are installed from tarballs we send you until they're on npm.
@@ -143,7 +145,9 @@ code.
 Without more setup, links open your app's first screen with the PR's code. To open a specific screen with
 test data and a checklist:
 
-1. **Add a plan to the PR:** `.tapthrough/plans/<pr-number>.json`. See [plan files](plan-files.md).
+1. **Write scenarios** in `.tapthrough/scenarios/`, one per screen state. `npx @tapthrough/cli map` lists
+   your screens and which ones still need one. See [plan files](plan-files.md) and
+   [map your screens](scenario-map.md).
 2. **Deploy a seed hook** that creates the test data on your staging backend. See the
    [seed hook README](../packages/seed/README.md). It only runs in `staging` or `development`, and only for
    the repos you list.

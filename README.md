@@ -9,7 +9,9 @@ and the shared protocol. The hosted service lives in a separate, private repo.
 ## Docs
 
 - [Getting started](docs/getting-started.md): set up Tapthrough on an Expo app in about 30 minutes
+- [Set up with your coding agent](docs/onboard-with-your-agent.md): one line for Claude Code, Cursor or Codex
 - [Plan files](docs/plan-files.md): land reviewers on the right screen with test data and a checklist
+- [Map your screens](docs/scenario-map.md): see which screens have scenarios, and check scenario files
 - [Reviewing a PR](docs/reviewing.md): for reviewers, including those who don't write code
 
 ## Packages
@@ -17,7 +19,7 @@ and the shared protocol. The hosted service lives in a separate, private repo.
 | Package | Status | Does |
 | --- | --- | --- |
 | [`@tapthrough/protocol`](packages/protocol) | M1 | Versioned schemas (scenario, run report, seed hook) and link-token signing and verification |
-| `@tapthrough/cli` | M3 | Builds the manifest and reports runs from the Action |
+| [`@tapthrough/cli`](packages/cli) | M3 | `map` lists screens and their scenarios; `check` validates scenario files. Also the route graph the Action uses |
 | [`@tapthrough/expo`](packages/expo) | M2 | The SDK and config plugin: seeds, logs in, applies flags and navigates when the app opens from a link |
 | [`@tapthrough/seed`](packages/seed) | M2 | Fetch-API seed-hook handler for Deno, Node or edge functions, with a Supabase test-user helper |
 

@@ -85,7 +85,8 @@ export function aliasesFromTsconfig(tsconfig: string | null, dir: string): Alias
   }
 }
 
-function resolve(
+/** The repo file an import specifier points at, or undefined for packages and missing files. */
+export function resolveImport(
   specifier: string,
   from: string,
   files: Set<string>,
@@ -126,7 +127,7 @@ export function affectedRoutesByImports(input: {
   for (const [file, source] of input.sources) {
     if (!SOURCE.test(file)) continue
     for (const specifier of importSpecifiers(source)) {
-      const target = resolve(specifier, file, files, input.aliases)
+      const target = resolveImport(specifier, file, files, input.aliases)
       if (!target) continue
       if (!importedBy.has(target)) importedBy.set(target, new Set())
       importedBy.get(target)?.add(file)

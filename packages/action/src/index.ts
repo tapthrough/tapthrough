@@ -1,11 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { affectedRoutesByImports, aliasesFromTsconfig, routesFromFiles } from '@tapthrough/cli'
 import { MAX_DIFF_LENGTH, type Manifest, type RunReport } from '@tapthrough/protocol'
 import { parseEasUpdateJson } from './eas.js'
 import { type ExpoInfo, expoInfoFromConfig } from './expo-config.js'
-import { affectedRoutesByImports, aliasesFromTsconfig } from './imports.js'
-import { routesFromFiles } from './routes.js'
 
 function input(name: string): string {
   return (process.env[`INPUT_${name.toUpperCase()}`] ?? '').trim()

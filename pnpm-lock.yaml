@@ -26,6 +26,9 @@ importers:
 
   packages/action:
     dependencies:
+      '@tapthrough/cli':
+        specifier: workspace:^
+        version: link:../cli
       '@tapthrough/protocol':
         specifier: workspace:^
         version: link:../protocol
@@ -33,6 +36,12 @@ importers:
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
+
+  packages/cli:
+    dependencies:
+      '@tapthrough/protocol':
+        specifier: workspace:^
+        version: link:../protocol
 
   packages/expo:
     dependencies:

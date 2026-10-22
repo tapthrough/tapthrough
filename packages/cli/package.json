@@ -1,0 +1,40 @@
+{
+  "name": "@tapthrough/cli",
+  "version": "0.1.0",
+  "description": "Tapthrough CLI: maps an Expo Router app's screens to scenarios and checks scenario files",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tapthrough/tapthrough.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/tapthrough/tapthrough/tree/main/packages/cli",
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "tapthrough": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@tapthrough/protocol": "workspace:^"
+  }
+}

@@ -27,7 +27,8 @@ Each PR runs the scenarios it touches, and the comment says why for each one:
 
 The rest of the library stays available from the app's Review menu. When none match, the comment says so.
 A few scenarios per screen, written once, cover every PR after that, and agents can write them too, since
-they're plain JSON.
+they're plain JSON. `npx @tapthrough/cli map` lists the screens that don't have one yet, and
+`npx @tapthrough/cli check` validates the files. See [map your screens](scenario-map.md).
 
 ## Per-PR plan files
 
