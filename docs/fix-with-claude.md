@@ -25,8 +25,9 @@ permissions:
   # Proves to Tapthrough which repo is asking. No Tapthrough secret needed.
   id-token: write
 
+# One fix at a time per PR, since they push to the same branch; issue fixes each get their own.
 concurrency:
-  group: tapthrough-fix-${{ github.event.client_payload.pr }}
+  group: tapthrough-fix-${{ github.event.client_payload.pr && format('pr-{0}', github.event.client_payload.pr) || format('issue-{0}', github.event.client_payload.issue) }}
 
 jobs:
   fix:
