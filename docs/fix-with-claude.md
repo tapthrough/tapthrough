@@ -48,7 +48,22 @@ installation predates that permission, an org owner accepts it under **Settings 
 - **On GitHub:** tick **Fix with Claude** in the report's comment. Only people with write access to the repo
   can start a fix this way.
 
-Reports marked "not from this PR" don't offer a fix. File them as an issue instead.
+Reports marked "not from this PR" don't offer a fix. File them as an issue instead, then fix the issue.
+
+## Fix an issue
+
+Add the `tapthrough:fix` label to an open issue. Claude fixes it on your default branch and Tapthrough opens a
+pull request that says `Fixes #<n>`, so merging it closes the issue. The fix PR gets its own Tapthrough preview.
+
+- **Who can start one:** people with write access. A label from anyone else is taken off with a note.
+- **Issues filed from a report** (the report's **Open it as a new issue** link) carry the report's screenshot,
+  screen, device and console errors to Claude. Other issues give Claude their title and text.
+- **Progress:** one comment on the issue follows the run and links the PR when it opens.
+- **When Claude changes nothing,** the comment says why and the label comes off. Add it again to retry.
+- **Branch:** `tapthrough/fix-<n>`. It's Tapthrough's own, so a retry replaces it.
+
+The same workflow runs these, so there's nothing more to set up. The Tapthrough GitHub app needs the
+**Issues** event, which it subscribes to by default.
 
 ## What Claude does
 
@@ -66,8 +81,8 @@ stays open until a reviewer re-checks it on the new build.
 - **Paths it can't change:** edits under `.github/` or `.tapthrough/`, and edits to lockfiles, are undone
   before committing.
 - **Untrusted reports:** report text is passed to Claude as a description, never as instructions.
-- **Limits:** five fix runs per PR per day, and one at a time per report. The `max-turns` input caps each
-  run's cost (default 40).
+- **Limits:** five fix runs per PR per day, five issue fixes per repo per day, and one at a time per report or
+  issue. The `max-turns` input caps each run's cost (default 40).
 - **Forks:** PRs from forks can't be fixed, since Tapthrough can't push to them.
 
 ## Inputs

@@ -64,20 +64,29 @@ async function claim() {
   writeFileSync(taskFile, JSON.stringify({ ...rest, fixRequestId }, null, 2))
   output('claimed', 'true')
   output('head-ref', task.headRef)
+  // An issue fix starts from the default branch and pushes a branch of its own.
+  output('checkout-ref', task.checkoutRef ?? task.headRef)
   output('push-token', pushToken)
-  console.log(`Fixing a report on PR #${task.pr} (branch ${task.headRef}).`)
+  console.log(
+    task.mode === 'issue'
+      ? `Fixing issue #${task.issue} from ${task.checkoutRef}, onto ${task.headRef}.`
+      : `Fixing a report on PR #${task.pr} (branch ${task.headRef}).`,
+  )
 }
 
 async function prepare() {
   const task = JSON.parse(readFileSync(taskFile, 'utf8'))
-  // fetch-depth: 0 already has the base branch; fetch it again only if it's missing.
-  try {
-    git('rev-parse', '--verify', `origin/${task.baseRef}`)
-  } catch {
-    git('fetch', '--no-tags', 'origin', task.baseRef)
+  // An issue fix has no PR, so no diff to blame.
+  if (task.mode !== 'issue') {
+    // fetch-depth: 0 already has the base branch; fetch it again only if it's missing.
+    try {
+      git('rev-parse', '--verify', `origin/${task.baseRef}`)
+    } catch {
+      git('fetch', '--no-tags', 'origin', task.baseRef)
+    }
+    const diff = git('diff', `origin/${task.baseRef}...HEAD`)
+    writeFileSync(task.paths.diff, diff)
   }
-  const diff = git('diff', `origin/${task.baseRef}...HEAD`)
-  writeFileSync(task.paths.diff, diff)
   if (task.screenshotUrl) {
     const response = await fetch(task.screenshotUrl)
     if (response.ok) writeFileSync(task.paths.screenshot, Buffer.from(await response.arrayBuffer()))
@@ -192,7 +201,11 @@ async function finish() {
       '-m',
       `Fix: ${subject}`,
       '-m',
-      `${verdict.summary}\n\nReported by a reviewer on PR #${task.pr} through Tapthrough.\n\nCo-Authored-By: Claude <noreply@anthropic.com>`,
+      `${verdict.summary}\n\n${
+        task.mode === 'issue'
+          ? `Requested on issue #${task.issue} through Tapthrough.`
+          : `Reported by a reviewer on PR #${task.pr} through Tapthrough.`
+      }\n\nCo-Authored-By: Claude <noreply@anthropic.com>`,
     ],
     { stdio: 'inherit' },
   )
@@ -205,6 +218,8 @@ async function finish() {
       '-c',
       `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}`,
       'push',
+      // The issue's branch is Tapthrough's own, so a retry replaces it.
+      ...(task.mode === 'issue' ? ['--force'] : []),
       'origin',
       `HEAD:refs/heads/${task.headRef}`,
     ],
@@ -212,7 +227,7 @@ async function finish() {
   )
   await report({
     outcome: 'fixed',
-    fromThisPr: verdict.fromThisPr ?? true,
+    ...(task.mode === 'issue' ? {} : { fromThisPr: verdict.fromThisPr ?? true }),
     summary: verdict.summary,
     commitSha,
   })

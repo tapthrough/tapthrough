@@ -1,5 +1,5 @@
 name: Tapthrough Fix
-description: Lets Claude fix a bug a reviewer reported from a Tapthrough preview, and push the fix to the PR
+description: Lets Claude fix a bug reported from a Tapthrough preview, on the PR or from a labeled issue
 author: Tapthrough
 branding:
   icon: tool
@@ -36,7 +36,7 @@ runs:
     # The repo's own read-only token clones; credentials aren't kept, so the agent can't push.
     - uses: actions/checkout@v4
       with:
-        ref: ${{ steps.claim.outputs.head-ref }}
+        ref: ${{ steps.claim.outputs.checkout-ref }}
         fetch-depth: 0
         persist-credentials: false
 
