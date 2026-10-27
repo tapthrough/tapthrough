@@ -6,6 +6,7 @@ import {
   Animated,
   AppState,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Platform,
@@ -80,6 +81,26 @@ function nextFrame() {
   return new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   )
+}
+
+/**
+ * Puts the app's keyboard away. A sheet that opens while it's up can't tell
+ * it's there, so the bottom of the sheet would sit under it. Resolves once it's
+ * gone, so a screenshot taken next doesn't catch it halfway down.
+ */
+function dismissKeyboard() {
+  if (!Keyboard.isVisible()) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      subscription.remove()
+      clearTimeout(fallback)
+      resolve()
+    }
+    const subscription = Keyboard.addListener('keyboardDidHide', done)
+    // In case the event never comes, e.g. a hardware keyboard.
+    const fallback = setTimeout(done, 500)
+    Keyboard.dismiss()
+  })
 }
 
 interface FailingStep {
@@ -173,6 +194,7 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
 
   async function open() {
     setToast(null)
+    const keyboardGone = dismissKeyboard()
     if (hasReviewItems(checklist)) {
       setPhase('checklist')
       void refresh()
@@ -183,6 +205,7 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
     if (hasReviewItems(list)) {
       setPhase('checklist')
     } else {
+      await keyboardGone
       await startReport(null)
     }
   }
