@@ -98,6 +98,15 @@ Your `development` profile needs `"developmentClient": true`, plus `"ios": { "si
 `"android": { "buildType": "apk" }`. Reviewers install it once. After that, each PR arrives as an update.
 You only need a new build when native code changes.
 
+For iPhones, add a second profile without `"simulator": true`, keeping `"distribution": "internal"` and the
+same `channel`. This build needs a paid Apple Developer account. Register each reviewer's iPhone first, because
+the build only installs on phones that were registered before it was made:
+
+```sh
+eas device:create                                          # send the link to the reviewer's iPhone
+eas build --profile development-device --platform ios      # rebuild after adding phones
+```
+
 ## 4. Add the workflow
 
 Add an `EXPO_TOKEN` secret to the repo. A robot token from your Expo account works best (it needs the

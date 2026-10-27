@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  checklistProgress,
   failedStepBody,
   fetchChecklist,
   hasReviewItems,
   previewContextFromManifest,
+  progressLabel,
   requestFix,
+  reviewBadge,
   scenarioIdFromToken,
   sendCause,
   sendFeedback,
@@ -308,5 +311,56 @@ describe('requestFix', () => {
       },
     )
     expect(limited).toEqual({ ok: false, message: 'Too many' })
+  })
+})
+
+describe('checklist progress and badge', () => {
+  const step = (index: number, result?: 'pass' | 'fail') => ({
+    index,
+    action: `Step ${index}`,
+    expect: 'It works',
+    result: result ? { result, reporter: null, platform: 'ios' as const } : null,
+  })
+  const checklist = (steps: ReturnType<typeof step>[], extra: object = {}) => ({
+    pr: 142,
+    sha: 'abc',
+    open: true,
+    scenarios: [{ key: 'checkout', title: 'Checkout', routePath: '/checkout', steps }],
+    ...extra,
+  })
+
+  it('counts results, letting local results override the server', () => {
+    const list = checklist([step(0, 'pass'), step(1), step(2, 'fail')])
+    expect(checklistProgress(list)).toEqual({ total: 3, passed: 1, failed: 1 })
+    expect(checklistProgress(list, { 'checkout:1': 'pass' })).toEqual({
+      total: 3,
+      passed: 2,
+      failed: 1,
+    })
+  })
+
+  it('labels progress', () => {
+    expect(progressLabel({ total: 2, passed: 1, failed: 0 })).toBe('1 of 2 checked')
+    expect(progressLabel({ total: 2, passed: 2, failed: 0 })).toBe('2 of 2 passed')
+    expect(progressLabel({ total: 3, passed: 1, failed: 1 })).toBe('2 of 3 checked · 1 failed')
+  })
+
+  it('badges a new build first, then failures, then steps left', () => {
+    const newer = { sha: 'def', updateGroupId: 'g2', openUrl: null, hasFix: true }
+    expect(reviewBadge(checklist([step(0, 'fail')], { newerBuild: newer }))).toEqual({
+      kind: 'new-build',
+    })
+    expect(reviewBadge(checklist([step(0, 'fail'), step(1)]))).toEqual({ kind: 'failed' })
+    expect(reviewBadge(checklist([step(0, 'pass'), step(1)]))).toEqual({
+      kind: 'remaining',
+      count: 1,
+    })
+    expect(reviewBadge(checklist([step(0, 'pass')]))).toEqual({ kind: 'done' })
+    expect(reviewBadge(checklist([]))).toBeNull()
+  })
+
+  it('opens the sheet for a newer build even without steps', () => {
+    const newer = { sha: 'def', updateGroupId: 'g2', openUrl: null, hasFix: false }
+    expect(hasReviewItems(checklist([], { newerBuild: newer }))).toBe(true)
   })
 })

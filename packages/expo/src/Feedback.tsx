@@ -1,12 +1,13 @@
 import Constants from 'expo-constants'
 import { usePathname } from 'expo-router'
-import { useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Animated,
+  AppState,
   Image,
   KeyboardAvoidingView,
   Linking,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -14,20 +15,26 @@ import {
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native'
 import { Annotator } from './Annotator.js'
+import { Bubble, COLORS } from './Bubble.js'
 import type { AnnotationBox } from './core/annotations.js'
 import { createDiagnostics, installDiagnostics } from './core/diagnostics.js'
 import {
   type Checklist,
   type ChecklistStep,
+  checklistProgress,
   failedStepBody,
   fetchChecklist,
   hasReviewItems,
+  type NewerBuild,
   previewContextFromManifest,
+  progressLabel,
   type RecheckItem,
   requestFix,
+  reviewBadge,
   type StepResultValue,
   sendCause,
   sendFeedback,
@@ -35,6 +42,7 @@ import {
   sendStepResult,
   type Triage,
 } from './core/feedback.js'
+import { Overlay, useBackPress } from './Overlay.js'
 import { controller } from './runtime.js'
 import { captureScreenshot, type Screenshot } from './screenshot.js'
 
@@ -79,10 +87,17 @@ interface FailingStep {
   step: ChecklistStep
 }
 
+/** How often a PR preview checks for new results and newer builds while in the foreground. */
+const REFRESH_MS = 30_000
+
+/** Update groups the reviewer has already been told about, so the toast shows once. */
+const announcedBuilds = new Set<string>()
+
 /**
- * A small Review button over a PR preview. It opens the PR's checklist (pass or
- * fail each step) or, without a plan, goes straight to reporting an issue with
- * a screenshot of the screen behind it.
+ * A small draggable Review bubble over a PR preview. It opens the PR's
+ * checklist (pass or fail each step) or, without a plan, goes straight to
+ * reporting an issue with a screenshot of the screen behind it. It keeps the
+ * checklist fresh in the background, so it can say when a newer build is out.
  */
 export function ReportButton({ apiUrl }: { apiUrl: string }) {
   const preview = useMemo(() => previewContextFromManifest(Constants.manifest2), [])
@@ -93,6 +108,8 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
   const [checklist, setChecklist] = useState<Checklist | null>(null)
   const [failing, setFailing] = useState<FailingStep | null>(null)
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null)
+  const [toast, setToast] = useState<NewerBuild | null>(null)
+  const platform = Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : null
 
   // Only PR previews record diagnostics; regular builds are never hooked.
   useEffect(() => {
@@ -113,14 +130,57 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
     if (preview) diagnostics.recordScreen(pathname)
   }, [preview, pathname])
 
-  if (!preview || (Platform.OS !== 'ios' && Platform.OS !== 'android')) return null
-  const platform = Platform.OS as 'ios' | 'android'
+  async function refresh() {
+    if (!preview || !platform) return null
+    const list = await fetchChecklist(preview, platform, { apiUrl })
+    if (list) setChecklist(list)
+    const newer = list?.newerBuild
+    if (newer && !announcedBuilds.has(newer.updateGroupId)) {
+      announcedBuilds.add(newer.updateGroupId)
+      setToast(newer)
+    }
+    return list
+  }
+
+  // Fetch up front so the sheet opens instantly, then poll while the app is in front.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refresh reads current props
+  useEffect(() => {
+    if (!preview || !platform) return
+    let timer: ReturnType<typeof setInterval> | undefined
+    const start = () => {
+      clearInterval(timer)
+      void refresh()
+      timer = setInterval(() => void refresh(), REFRESH_MS)
+    }
+    const stop = () => clearInterval(timer)
+    if (AppState.currentState === 'active') start()
+    const subscription = AppState.addEventListener('change', (next) =>
+      next === 'active' ? start() : stop(),
+    )
+    return () => {
+      stop()
+      subscription.remove()
+    }
+  }, [preview, platform, apiUrl])
+
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 6000)
+    return () => clearTimeout(timer)
+  }, [toast])
+
+  if (!preview || !platform) return null
 
   async function open() {
+    setToast(null)
+    if (hasReviewItems(checklist)) {
+      setPhase('checklist')
+      void refresh()
+      return
+    }
     setPhase('loading')
-    const list = await fetchChecklist(preview as NonNullable<typeof preview>, platform, { apiUrl })
+    const list = await refresh()
     if (hasReviewItems(list)) {
-      setChecklist(list)
       setPhase('checklist')
     } else {
       await startReport(null)
@@ -130,6 +190,7 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
   /** Hides everything, screenshots the app, then opens the composer. */
   async function startReport(step: FailingStep | null) {
     setFailing(step)
+    setToast(null)
     setPhase('capturing')
     await nextFrame()
     setScreenshot(await captureScreenshot())
@@ -140,25 +201,16 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
     setPhase('idle')
     setScreenshot(null)
     setFailing(null)
+    void refresh()
   }
 
   return (
-    <>
+    <Overlay>
       {phase === 'idle' || phase === 'loading' ? (
-        <Pressable
-          onPress={open}
-          disabled={phase === 'loading'}
-          style={({ pressed }) => [styles.pill, pressed && styles.pressed]}
-          accessibilityRole="button"
-          accessibilityLabel="Review this pull request: check off steps or report an issue"
-          hitSlop={8}
-        >
-          {phase === 'loading' ? (
-            <ActivityIndicator color="#ffffff" />
-          ) : (
-            <Text style={styles.pillText}>Review</Text>
-          )}
-        </Pressable>
+        <>
+          {toast ? <NewBuildToast build={toast} onPress={open} /> : null}
+          <Bubble onPress={open} badge={reviewBadge(checklist)} busy={phase === 'loading'} />
+        </>
       ) : null}
       {phase === 'checklist' && checklist ? (
         <ReviewSheet
@@ -248,14 +300,176 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
           onClose={close}
         />
       ) : null}
-    </>
+    </Overlay>
   )
 }
 
-const RESULT_LABEL: Record<StepResultValue, string> = {
-  pass: 'Passed',
-  fail: 'Failed',
-  skip: 'Skipped',
+/**
+ * A bottom sheet over a light scrim; tapping the scrim closes it. It's a plain
+ * view in the overlay rather than a Modal, because on iOS a Modal can't present
+ * while the app is already showing a native modal screen.
+ */
+function Sheet({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const { height } = useWindowDimensions()
+  const shown = useRef(new Animated.Value(0)).current
+  useBackPress(onClose)
+  useEffect(() => {
+    Animated.timing(shown, { toValue: 1, duration: 260, useNativeDriver: true }).start()
+  }, [shown])
+
+  return (
+    <KeyboardAvoidingView
+      style={[StyleSheet.absoluteFill, styles.backdrop]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, { opacity: shown }]}>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+        />
+      </Animated.View>
+      <Animated.View
+        style={[
+          styles.sheet,
+          {
+            transform: [
+              { translateY: shown.interpolate({ inputRange: [0, 1], outputRange: [height, 0] }) },
+            ],
+          },
+        ]}
+        accessibilityViewIsModal
+      >
+        <View style={styles.grab} />
+        {children}
+      </Animated.View>
+    </KeyboardAvoidingView>
+  )
+}
+
+/** "A new build is ready" for a moment at the top, then it's just the bubble's dot. */
+function NewBuildToast({ build, onPress }: { build: NewerBuild; onPress: () => void }) {
+  return (
+    <View style={styles.toastWrap} pointerEvents="box-none">
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.toast, pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLiveRegion="polite"
+      >
+        <View style={[styles.toastDot, { backgroundColor: COLORS.tape }]} />
+        <Text style={styles.toastText}>
+          {build.hasFix ? 'Claude’s fix is ready to test' : 'A new build is ready'}
+        </Text>
+        <Text style={styles.toastAction}>View</Text>
+      </Pressable>
+    </View>
+  )
+}
+
+/** Above the checklist when the PR has moved on: open the newer build in one tap. */
+function NewerBuildBanner({ build }: { build: NewerBuild }) {
+  return (
+    <View style={styles.newer}>
+      <View style={styles.newerText}>
+        <Text style={styles.newerTitle}>
+          {build.hasFix ? 'Claude pushed a fix' : 'A newer build is ready'}
+        </Text>
+        <Text style={styles.newerMeta}>
+          {`Commit ${build.sha.slice(0, 7)} · this build is out of date`}
+        </Text>
+      </View>
+      {build.openUrl ? (
+        <Pressable
+          onPress={() => Linking.openURL(build.openUrl as string)}
+          style={({ pressed }) => [styles.newerButton, pressed && styles.pressed]}
+          accessibilityRole="link"
+          accessibilityLabel="Open the newer build"
+        >
+          <Text style={styles.newerButtonText}>Open</Text>
+        </Pressable>
+      ) : (
+        <Text style={styles.newerMeta}>Open it from the PR</Text>
+      )}
+    </View>
+  )
+}
+
+/** Who's reviewing: a slim line once known, a field until then. */
+function ReviewerName({ name, onChange }: { name: string; onChange: (name: string) => void }) {
+  const [editing, setEditing] = useState(name.trim() === '')
+  if (!editing) {
+    return (
+      <View style={styles.nameRow}>
+        <Text style={styles.muted}>
+          Reviewing as <Text style={styles.nameStrong}>{name.trim()}</Text>
+        </Text>
+        <Pressable onPress={() => setEditing(true)} accessibilityRole="button" hitSlop={8}>
+          <Text style={styles.linkSmall}>Change</Text>
+        </Pressable>
+      </View>
+    )
+  }
+  return (
+    <TextInput
+      value={name}
+      onChangeText={onChange}
+      onBlur={() => setEditing(name.trim() === '')}
+      placeholder="Your name (shown on the PR)"
+      placeholderTextColor="#8a8f98"
+      autoCapitalize="words"
+      returnKeyType="done"
+      style={[styles.input, styles.inputSlim]}
+      accessibilityLabel="Your name"
+    />
+  )
+}
+
+/** Fail and Pass for one item; the chosen one fills in. */
+function Verdict({
+  value,
+  failLabel,
+  passLabel,
+  subject,
+  onFail,
+  onPass,
+}: {
+  value: 'pass' | 'fail' | undefined
+  failLabel: string
+  passLabel: string
+  subject: string
+  onFail: () => void
+  onPass: () => void
+}) {
+  return (
+    <View style={styles.stepButtons}>
+      <Pressable
+        onPress={onFail}
+        style={[styles.small, styles.smallFail, value === 'fail' && styles.smallFailOn]}
+        accessibilityRole="button"
+        accessibilityState={{ selected: value === 'fail' }}
+        accessibilityLabel={`${failLabel}: ${subject}`}
+        hitSlop={4}
+      >
+        <Text style={[styles.smallFailText, value === 'fail' && styles.smallOnText]}>
+          {failLabel}
+        </Text>
+      </Pressable>
+      <Pressable
+        onPress={onPass}
+        style={[styles.small, styles.smallPass, value === 'pass' && styles.smallPassOn]}
+        accessibilityRole="button"
+        accessibilityState={{ selected: value === 'pass' }}
+        accessibilityLabel={`${passLabel}: ${subject}`}
+        hitSlop={4}
+      >
+        <Text style={[styles.smallPassText, value === 'pass' && styles.smallOnText]}>
+          {value === 'pass' ? `✓ ${passLabel}` : passLabel}
+        </Text>
+      </Pressable>
+    </View>
+  )
 }
 
 /** The PR's test plan: pass or fail each step; failing one files a report about it. */
@@ -288,6 +502,7 @@ function ReviewSheet({
   )
   const [error, setError] = useState<string | null>(null)
   const [rechecked, setRechecked] = useState<Record<string, 'fixed' | 'still_broken'>>({})
+  const progress = checklistProgress(checklist, results)
 
   async function recheck(item: RecheckItem, result: 'fixed' | 'still_broken') {
     rememberedName = name.trim()
@@ -317,123 +532,94 @@ function ReviewSheet({
   }
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.backdrop}>
-        <View style={styles.sheet}>
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
-            <View style={styles.headerRow}>
-              <Text style={styles.title}>Review PR #{checklist.pr}</Text>
-              <Pressable onPress={onClose} accessibilityRole="button" hitSlop={8}>
-                <Text style={styles.link}>Close</Text>
-              </Pressable>
-            </View>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="Your name (shown on the PR)"
-              placeholderTextColor="#8a8f98"
-              autoCapitalize="words"
-              style={styles.input}
-              accessibilityLabel="Your name"
-            />
-            {checklist.recheck?.length ? (
-              <View style={styles.scenario}>
-                <Text style={styles.scenarioTitle}>Re-check earlier reports</Text>
-                {checklist.recheck.map((item) => {
-                  const done = rechecked[item.id]
-                  return (
-                    <View key={item.id} style={styles.step}>
-                      <Text style={styles.stepAction}>{item.excerpt}</Text>
-                      <Text style={styles.muted}>
-                        {[item.reporter, `reported on ${item.sha.slice(0, 7)}`]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </Text>
-                      <View style={styles.stepActions}>
-                        {done || item.stillBrokenHere ? (
-                          <Text style={[styles.stepStatus, done !== 'fixed' && styles.error]}>
-                            {done === 'fixed' ? 'Fixed' : 'Still broken'}
-                          </Text>
-                        ) : (
-                          <View />
-                        )}
-                        <View style={styles.stepButtons}>
-                          <Pressable
-                            onPress={() => recheck(item, 'still_broken')}
-                            style={[styles.small, styles.smallFail]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Still broken: ${item.excerpt}`}
-                          >
-                            <Text style={styles.smallFailText}>Still broken</Text>
-                          </Pressable>
-                          <Pressable
-                            onPress={() => recheck(item, 'fixed')}
-                            style={[styles.small, styles.smallPass]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Fixed: ${item.excerpt}`}
-                          >
-                            <Text style={styles.smallPassText}>Fixed</Text>
-                          </Pressable>
-                        </View>
-                      </View>
-                    </View>
-                  )
-                })}
-              </View>
-            ) : null}
-            {checklist.scenarios.map((scenario) => (
-              <View key={scenario.key} style={styles.scenario}>
-                <Text style={styles.scenarioTitle}>{scenario.title}</Text>
-                {scenario.steps.map((step) => {
-                  const current = results[`${scenario.key}:${step.index}`]
-                  return (
-                    <View key={step.index} style={styles.step}>
-                      <Text style={styles.stepAction}>{step.action}</Text>
-                      <Text style={styles.muted}>Expect: {step.expect}</Text>
-                      <View style={styles.stepActions}>
-                        {current ? (
-                          <Text style={[styles.stepStatus, current === 'fail' && styles.error]}>
-                            {RESULT_LABEL[current]}
-                          </Text>
-                        ) : (
-                          <View />
-                        )}
-                        <View style={styles.stepButtons}>
-                          <Pressable
-                            onPress={() => fail(scenario.key, step)}
-                            style={[styles.small, styles.smallFail]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Fail: ${step.action}`}
-                          >
-                            <Text style={styles.smallFailText}>Fail</Text>
-                          </Pressable>
-                          <Pressable
-                            onPress={() => pass(scenario.key, step)}
-                            style={[styles.small, styles.smallPass]}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Pass: ${step.action}`}
-                          >
-                            <Text style={styles.smallPassText}>Pass</Text>
-                          </Pressable>
-                        </View>
-                      </View>
-                    </View>
-                  )
-                })}
-              </View>
-            ))}
-            {error ? (
-              <Text style={styles.error} accessibilityRole="alert">
-                {error}
+    <Sheet onClose={onClose}>
+      <View style={styles.sheetHead}>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.title}>PR #{checklist.pr}</Text>
+            {progress.total ? (
+              <Text style={[styles.muted, progress.failed ? styles.error : null]}>
+                {progressLabel(progress)}
               </Text>
             ) : null}
-            <Pressable onPress={onReportOther} accessibilityRole="button" style={styles.other}>
-              <Text style={styles.link}>Report something else</Text>
-            </Pressable>
-          </ScrollView>
+          </View>
+          <Pressable onPress={onClose} accessibilityRole="button" hitSlop={8}>
+            <Text style={styles.link}>Done</Text>
+          </Pressable>
         </View>
+        {progress.total ? (
+          <View style={styles.bar} accessibilityElementsHidden importantForAccessibility="no">
+            <View
+              style={[styles.barFill, { flex: progress.passed, backgroundColor: COLORS.pass }]}
+            />
+            <View
+              style={[styles.barFill, { flex: progress.failed, backgroundColor: COLORS.fail }]}
+            />
+            <View style={{ flex: progress.total - progress.passed - progress.failed }} />
+          </View>
+        ) : null}
       </View>
-    </Modal>
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
+        {checklist.newerBuild ? <NewerBuildBanner build={checklist.newerBuild} /> : null}
+        <ReviewerName name={name} onChange={setName} />
+        {checklist.recheck?.length ? (
+          <View style={styles.scenario}>
+            <Text style={styles.scenarioTitle}>Re-check earlier reports</Text>
+            {checklist.recheck.map((item) => {
+              const done = rechecked[item.id] ?? (item.stillBrokenHere ? 'still_broken' : undefined)
+              return (
+                <View key={item.id} style={styles.step}>
+                  <Text style={styles.stepAction}>{item.excerpt}</Text>
+                  <Text style={styles.muted}>
+                    {[item.reporter, `reported on ${item.sha.slice(0, 7)}`]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </Text>
+                  <Verdict
+                    value={done === 'fixed' ? 'pass' : done === 'still_broken' ? 'fail' : undefined}
+                    failLabel="Still broken"
+                    passLabel="Fixed"
+                    subject={item.excerpt}
+                    onFail={() => recheck(item, 'still_broken')}
+                    onPass={() => recheck(item, 'fixed')}
+                  />
+                </View>
+              )
+            })}
+          </View>
+        ) : null}
+        {checklist.scenarios.map((scenario) => (
+          <View key={scenario.key} style={styles.scenario}>
+            <Text style={styles.scenarioTitle}>{scenario.title}</Text>
+            {scenario.steps.map((step) => {
+              const current = results[`${scenario.key}:${step.index}`]
+              return (
+                <View key={step.index} style={styles.step}>
+                  <Text style={styles.stepAction}>{step.action}</Text>
+                  <Text style={styles.muted}>Expect: {step.expect}</Text>
+                  <Verdict
+                    value={current === 'skip' ? undefined : current}
+                    failLabel="Fail"
+                    passLabel="Pass"
+                    subject={step.action}
+                    onFail={() => fail(scenario.key, step)}
+                    onPass={() => pass(scenario.key, step)}
+                  />
+                </View>
+              )
+            })}
+          </View>
+        ))}
+        {error ? (
+          <Text style={styles.error} accessibilityRole="alert">
+            {error}
+          </Text>
+        ) : null}
+        <Pressable onPress={onReportOther} accessibilityRole="button" style={styles.other}>
+          <Text style={styles.link}>Report something else</Text>
+        </Pressable>
+      </ScrollView>
+    </Sheet>
   )
 }
 
@@ -503,129 +689,125 @@ function Composer({
   }
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.backdrop}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={styles.sheet}>
-          {status.kind === 'sent' ? (
-            <Sent
-              pr={pr}
-              commentUrl={status.commentUrl}
-              triage={status.triage}
-              onSetCause={
-                status.findingId
-                  ? (cause) => onSetCause(status.findingId as string, cause)
-                  : undefined
-              }
-              onRequestFix={
-                status.findingId ? () => onRequestFix(status.findingId as string) : undefined
-              }
-              onClose={onClose}
-            />
-          ) : (
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
-              <Text style={styles.title}>
-                {failedStep ? 'Step failed' : `Report an issue${pr ? ` on PR #${pr}` : ''}`}
-              </Text>
-              {failedStep ? (
-                <View style={styles.failedStep}>
-                  <Text style={styles.stepAction}>{failedStep.action}</Text>
-                  <Text style={styles.muted}>Expected: {failedStep.expect}</Text>
-                </View>
-              ) : null}
-              <Text style={styles.muted} numberOfLines={1}>
-                On {route}
-              </Text>
-              {screenshot ? (
-                <View style={styles.shotRow}>
-                  <Image
-                    source={{ uri: `data:${screenshot.contentType};base64,${screenshot.base64}` }}
-                    style={[styles.shot, !includeScreenshot && styles.shotOff]}
-                    resizeMode="contain"
-                    accessibilityLabel="Screenshot of the current screen"
-                  />
-                  <View style={styles.shotToggle}>
-                    <Text style={styles.label}>Include screenshot</Text>
-                    <Switch value={includeScreenshot} onValueChange={setIncludeScreenshot} />
-                    {includeScreenshot ? (
-                      <Pressable
-                        onPress={() => setAnnotating(true)}
-                        accessibilityRole="button"
-                        hitSlop={8}
-                      >
-                        <Text style={styles.link}>
-                          {annotations.length
-                            ? `Mark up (${annotations.length})`
-                            : 'Mark up: highlight or blur'}
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                </View>
-              ) : null}
-              {annotating && screenshot ? (
-                <Annotator
-                  screenshot={screenshot}
-                  initial={annotations}
-                  onDone={(boxes) => {
-                    setAnnotations(boxes)
-                    setAnnotating(false)
-                  }}
-                  onCancel={() => setAnnotating(false)}
-                />
-              ) : null}
-              <TextInput
-                value={body}
-                onChangeText={setBody}
-                placeholder={
-                  failedStep
-                    ? 'What happened instead? (optional)'
-                    : "What's wrong? What did you expect?"
-                }
-                placeholderTextColor="#8a8f98"
-                multiline
-                autoFocus
-                style={[styles.input, styles.body]}
-                accessibilityLabel="What's wrong"
-              />
-              <TextInput
-                value={name}
-                onChangeText={setName}
-                placeholder="Your name (optional)"
-                placeholderTextColor="#8a8f98"
-                autoCapitalize="words"
-                style={styles.input}
-                accessibilityLabel="Your name"
-              />
-              {status.kind === 'error' ? (
-                <Text style={styles.error} accessibilityRole="alert">
-                  {status.message}
-                </Text>
-              ) : null}
-              <View style={styles.actions}>
-                <Pressable onPress={onClose} accessibilityRole="button" hitSlop={8}>
-                  <Text style={styles.link}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  onPress={send}
-                  disabled={!canSend}
-                  style={[styles.primary, !canSend && styles.disabled]}
-                  accessibilityRole="button"
-                >
-                  {status.kind === 'sending' ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <Text style={styles.primaryText}>Send to PR</Text>
-                  )}
-                </Pressable>
+    <>
+      <Sheet onClose={onClose}>
+        {status.kind === 'sent' ? (
+          <Sent
+            pr={pr}
+            commentUrl={status.commentUrl}
+            triage={status.triage}
+            onSetCause={
+              status.findingId
+                ? (cause) => onSetCause(status.findingId as string, cause)
+                : undefined
+            }
+            onRequestFix={
+              status.findingId ? () => onRequestFix(status.findingId as string) : undefined
+            }
+            onClose={onClose}
+          />
+        ) : (
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
+            <Text style={styles.title}>
+              {failedStep ? 'Step failed' : `Report an issue${pr ? ` on PR #${pr}` : ''}`}
+            </Text>
+            {failedStep ? (
+              <View style={styles.failedStep}>
+                <Text style={styles.stepAction}>{failedStep.action}</Text>
+                <Text style={styles.muted}>Expected: {failedStep.expect}</Text>
               </View>
-            </ScrollView>
-          )}
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+            ) : null}
+            <Text style={styles.muted} numberOfLines={1}>
+              On {route}
+            </Text>
+            {screenshot ? (
+              <View style={styles.shotRow}>
+                <Image
+                  source={{ uri: `data:${screenshot.contentType};base64,${screenshot.base64}` }}
+                  style={[styles.shot, !includeScreenshot && styles.shotOff]}
+                  resizeMode="contain"
+                  accessibilityLabel="Screenshot of the current screen"
+                />
+                <View style={styles.shotToggle}>
+                  <Text style={styles.label}>Include screenshot</Text>
+                  <Switch value={includeScreenshot} onValueChange={setIncludeScreenshot} />
+                  {includeScreenshot ? (
+                    <Pressable
+                      onPress={() => setAnnotating(true)}
+                      accessibilityRole="button"
+                      hitSlop={8}
+                    >
+                      <Text style={styles.link}>
+                        {annotations.length
+                          ? `Mark up (${annotations.length})`
+                          : 'Mark up: highlight or blur'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
+            <TextInput
+              value={body}
+              onChangeText={setBody}
+              placeholder={
+                failedStep
+                  ? 'What happened instead? (optional)'
+                  : "What's wrong? What did you expect?"
+              }
+              placeholderTextColor="#8a8f98"
+              multiline
+              autoFocus
+              style={[styles.input, styles.body]}
+              accessibilityLabel="What's wrong"
+            />
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder="Your name (optional)"
+              placeholderTextColor="#8a8f98"
+              autoCapitalize="words"
+              style={styles.input}
+              accessibilityLabel="Your name"
+            />
+            {status.kind === 'error' ? (
+              <Text style={styles.error} accessibilityRole="alert">
+                {status.message}
+              </Text>
+            ) : null}
+            <View style={styles.actions}>
+              <Pressable onPress={onClose} accessibilityRole="button" hitSlop={8}>
+                <Text style={styles.link}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={send}
+                disabled={!canSend}
+                style={[styles.primary, !canSend && styles.disabled]}
+                accessibilityRole="button"
+              >
+                {status.kind === 'sending' ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={styles.primaryText}>Send to PR</Text>
+                )}
+              </Pressable>
+            </View>
+          </ScrollView>
+        )}
+      </Sheet>
+      {/* A sibling of the sheet, so it can cover the whole screen. */}
+      {annotating && screenshot ? (
+        <Annotator
+          screenshot={screenshot}
+          initial={annotations}
+          onDone={(boxes) => {
+            setAnnotations(boxes)
+            setAnnotating(false)
+          }}
+          onCancel={() => setAnnotating(false)}
+        />
+      ) : null}
+    </>
   )
 }
 
@@ -734,8 +916,8 @@ function Sent({
       {cause === 'pr' && onRequestFix ? (
         fix === 'requested' ? (
           <Text style={styles.reason}>
-            Claude is looking into it. If it finds the cause, it pushes a fix to the PR, and a new
-            build follows for you to re-check.
+            Claude is looking into it. If it finds the cause, it pushes a fix to the PR. When the
+            new build is ready, the Review button shows a dot.
           </Text>
         ) : fix === 'not_set_up' ? (
           <Text style={styles.reason}>
@@ -788,25 +970,86 @@ function Sent({
 }
 
 const styles = StyleSheet.create({
-  pill: {
+  pressed: { opacity: 0.7 },
+  backdrop: { justifyContent: 'flex-end' },
+  scrim: { backgroundColor: 'rgba(0, 0, 0, 0.18)' },
+  sheet: {
+    maxHeight: '85%',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    backgroundColor: '#ffffff',
+    shadowColor: '#000000',
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 12,
+  },
+  grab: {
+    alignSelf: 'center',
+    width: 36,
+    height: 5,
+    marginTop: 8,
+    borderRadius: 3,
+    backgroundColor: '#d8dbe0',
+  },
+  sheetHead: { paddingHorizontal: 20, paddingTop: 10, gap: 10 },
+  bar: {
+    flexDirection: 'row',
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+    backgroundColor: '#eceef1',
+  },
+  barFill: { height: 4 },
+  toastWrap: {
     position: 'absolute',
-    right: 16,
-    bottom: 44,
-    paddingVertical: 8,
+    top: Platform.OS === 'ios' ? 58 : 28,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  toast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 9,
     paddingHorizontal: 14,
     borderRadius: 999,
-    backgroundColor: 'rgba(24, 24, 27, 0.88)',
+    backgroundColor: 'rgba(14, 22, 32, 0.94)',
+    shadowColor: '#000000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 6,
   },
-  pressed: { opacity: 0.7 },
-  pillText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
-  backdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0, 0, 0, 0.4)' },
-  sheet: {
-    maxHeight: '90%',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    backgroundColor: '#ffffff',
+  toastDot: { width: 8, height: 8, borderRadius: 4 },
+  toastText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
+  toastAction: { color: COLORS.tape, fontSize: 14, fontWeight: '700' },
+  newer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#fbf6df',
+    borderWidth: 1,
+    borderColor: COLORS.tape,
   },
-  form: { padding: 20, gap: 12 },
+  newerText: { flex: 1, gap: 2 },
+  newerTitle: { fontSize: 15, fontWeight: '700', color: COLORS.tapeInk },
+  newerMeta: { fontSize: 12, color: '#6b6040' },
+  newerButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: COLORS.ink,
+  },
+  newerButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  nameStrong: { fontWeight: '600', color: '#16181d' },
+  linkSmall: { fontSize: 14, fontWeight: '600', color: '#1a73e8' },
+  inputSlim: { paddingVertical: 8, fontSize: 15 },
+  form: { padding: 20, paddingTop: 14, paddingBottom: 32, gap: 12 },
   sent: { padding: 20, paddingBottom: 40, gap: 8 },
   reason: { fontSize: 13, color: '#5b6170', lineHeight: 18 },
   causeRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
@@ -865,19 +1108,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#f4f5f7',
   },
   stepAction: { fontSize: 15, fontWeight: '600', color: '#16181d' },
-  stepActions: {
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  stepButtons: { flexDirection: 'row', gap: 8 },
-  stepStatus: { fontSize: 13, fontWeight: '600', color: '#1e7e34' },
-  small: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8 },
-  smallPass: { backgroundColor: '#1e7e34' },
-  smallPassText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
-  smallFail: { backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#c5221f' },
-  smallFailText: { color: '#c5221f', fontSize: 14, fontWeight: '600' },
+  stepButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 6 },
+  small: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
+  smallPass: { borderColor: COLORS.pass },
+  smallPassOn: { backgroundColor: COLORS.pass },
+  smallPassText: { color: COLORS.pass, fontSize: 14, fontWeight: '600' },
+  smallFail: { borderColor: COLORS.fail },
+  smallFailOn: { backgroundColor: COLORS.fail },
+  smallFailText: { color: COLORS.fail, fontSize: 14, fontWeight: '600' },
+  smallOnText: { color: '#ffffff' },
   other: { alignSelf: 'center', paddingVertical: 12 },
   failedStep: { gap: 2, padding: 10, borderRadius: 8, backgroundColor: '#fdecea' },
 })

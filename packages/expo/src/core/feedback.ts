@@ -162,20 +162,81 @@ export interface RecheckItem {
   stillBrokenHere: boolean
 }
 
+/** A later push to the PR than the build that's running. */
+export interface NewerBuild {
+  sha: string
+  updateGroupId: string
+  /** Opens it in the development build; null when the server can't build the link. */
+  openUrl: string | null
+  /** True when the push is a fix Claude made for a report. */
+  hasFix: boolean
+}
+
 export interface Checklist {
   pr: number
   sha: string
   open: boolean
   scenarios: { key: string; title: string; routePath: string; steps: ChecklistStep[] }[]
   recheck?: RecheckItem[]
+  newerBuild?: NewerBuild | null
 }
 
 /** Whether the Review sheet has anything to show. */
 export function hasReviewItems(checklist: Checklist | null): checklist is Checklist {
   return Boolean(
     checklist &&
-      (checklist.scenarios.some((s) => s.steps.length > 0) || (checklist.recheck?.length ?? 0) > 0),
+      (checklist.scenarios.some((s) => s.steps.length > 0) ||
+        (checklist.recheck?.length ?? 0) > 0 ||
+        checklist.newerBuild),
   )
+}
+
+export interface Progress {
+  total: number
+  passed: number
+  failed: number
+}
+
+/** Step results across the plan, keyed `scenario:index` like the Review sheet. */
+export function checklistProgress(
+  checklist: Checklist,
+  results: Record<string, StepResultValue | undefined> = {},
+): Progress {
+  const progress = { total: 0, passed: 0, failed: 0 }
+  for (const scenario of checklist.scenarios) {
+    for (const step of scenario.steps) {
+      progress.total += 1
+      const result = results[`${scenario.key}:${step.index}`] ?? step.result?.result
+      if (result === 'pass') progress.passed += 1
+      if (result === 'fail') progress.failed += 1
+    }
+  }
+  return progress
+}
+
+/** One line for the sheet's header, e.g. `1 of 3 checked` or `3 of 3 passed`. */
+export function progressLabel({ total, passed, failed }: Progress): string {
+  if (total === 0) return 'No steps to check'
+  if (passed === total) return `${total} of ${total} passed`
+  const label = `${passed + failed} of ${total} checked`
+  return failed ? `${label} · ${failed} failed` : label
+}
+
+export type Badge =
+  | { kind: 'new-build' }
+  | { kind: 'failed' }
+  | { kind: 'remaining'; count: number }
+  | { kind: 'done' }
+
+/** What the floating Review button shows: a new build wins, then failures, then steps left. */
+export function reviewBadge(checklist: Checklist | null): Badge | null {
+  if (!checklist) return null
+  if (checklist.newerBuild) return { kind: 'new-build' }
+  const progress = checklistProgress(checklist)
+  if (progress.total === 0) return null
+  if (progress.failed) return { kind: 'failed' }
+  const count = progress.total - progress.passed
+  return count === 0 ? { kind: 'done' } : { kind: 'remaining', count }
 }
 
 /** Marks an earlier report fixed or still broken on this build. Never throws. */

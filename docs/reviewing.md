@@ -8,21 +8,30 @@ You don't need to build anything or know the code. Each pull request has a Tapth
 | Where | What to do |
 | --- | --- |
 | **Computer** | Click **Open preview**, then **Open in iOS Simulator**. This needs [Expo Orbit](https://expo.dev/orbit), signed in to your team's Expo account. |
-| **Android phone** | Scan the QR code. The first time, install the preview app your team shares. Then tap **Open PR build**, and **Start scenario** to land on the screen with test data. |
-| **iPhone** | Coming once your team adds iPhone builds |
+| **Phone** | Scan the QR code. The first time, install the preview app your team shares. Then tap **Open PR build**, and **Start scenario** to land on the screen with test data. |
+
+On an iPhone, your team has to register the phone before you can install the preview app. Run
+`eas device:create`, or ask a teammate to, and open the link it gives you on the phone. Then turn on
+**Developer Mode** in Settings → Privacy & Security, and restart when asked.
 
 If the PR has scenarios, the page shows them as tabs. Pick one to see its test plan.
 
 ## Review
 
-In the app, tap the dark **Review** button in the bottom-right corner.
+In the app, tap the round **Review** button on the right edge. If it's in the way, drag it anywhere; it
+snaps to the nearer side and stays there for the session. It fades while you test, and its badge shows how
+many steps are left, a check when they've all passed, or **!** when one failed.
 
+- **See where you are.** The top of the checklist shows how many steps are checked, like **1 of 3 checked**.
 - **Pass or Fail each step.** Pass is recorded right away. Fail takes a screenshot of the app and lets you
   say what happened.
 - **Re-check earlier reports.** After a new push, reports from before show up first. Mark them **Fixed** or
   **Still broken**.
 - **Report something else.** For anything outside the plan: write what's wrong, and the screenshot comes
-  along.
+  along. **Mark up** lets you highlight what's wrong or blur personal data before it's sent.
+- **Get new builds.** When someone pushes to the PR, or Claude pushes a fix, a short notice appears at the
+  top and the Review button gets a yellow dot. Open the checklist and tap **Open** to switch to the new
+  build, then re-check.
 
 Your name (entered once) and device are attached. So are the screen you were on, recent errors and failed
 network requests (with tokens removed), which helps the developer reproduce it.

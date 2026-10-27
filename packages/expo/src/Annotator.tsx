@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Animated,
   Image,
-  Modal,
   PanResponder,
   Pressable,
   StyleSheet,
@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native'
 import { type AnnotationBox, boxFromDrag, MAX_ANNOTATIONS } from './core/annotations.js'
+import { useBackPress } from './Overlay.js'
 import type { Screenshot } from './screenshot.js'
 
 /**
@@ -34,6 +35,11 @@ export function Annotator({
   const [draft, setDraft] = useState<AnnotationBox | null>(null)
   const [aspect, setAspect] = useState(window.width / window.height)
   const uri = `data:${screenshot.contentType};base64,${screenshot.base64}`
+  const shown = useRef(new Animated.Value(0)).current
+  useBackPress(onCancel)
+  useEffect(() => {
+    Animated.timing(shown, { toValue: 1, duration: 180, useNativeDriver: true }).start()
+  }, [shown])
 
   // The image is shown at the screenshot's aspect ratio, so fractions map 1:1.
   const maxWidth = window.width - 32
@@ -78,7 +84,7 @@ export function Annotator({
   )
 
   return (
-    <Modal visible animationType="fade" onRequestClose={onCancel}>
+    <Animated.View style={[StyleSheet.absoluteFill, { opacity: shown }]} accessibilityViewIsModal>
       <View style={styles.screen}>
         <View style={styles.toolbar}>
           <Pressable onPress={onCancel} accessibilityRole="button" hitSlop={8}>
@@ -152,7 +158,7 @@ export function Annotator({
           ) : null}
         </View>
       </View>
-    </Modal>
+    </Animated.View>
   )
 }
 
