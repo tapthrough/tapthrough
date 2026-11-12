@@ -9,6 +9,7 @@ import {
   progressLabel,
   requestFix,
   requestLaunch,
+  resetMessage,
   reviewBadge,
   scenarioIdFromToken,
   sendCause,
@@ -462,5 +463,16 @@ describe('requestLaunch', () => {
         { apiUrl: 'https://t', fetch: offline },
       ),
     ).toMatchObject({ ok: false })
+  })
+})
+
+describe('resetMessage', () => {
+  it('says how many checks were cleared and why', () => {
+    expect(resetMessage({ fromSha: 'abcdef123', cleared: 11, reason: 'config' })).toBe(
+      '11 checks from abcdef1 were cleared because this push changed dependencies or app config, which can affect any screen. Checks on screens it didn’t touch were kept.',
+    )
+    expect(resetMessage({ fromSha: 'abcdef123', cleared: 1, reason: 'code' })).toMatch(
+      /^1 check from abcdef1 was cleared because this push changed the code they cover/,
+    )
   })
 })

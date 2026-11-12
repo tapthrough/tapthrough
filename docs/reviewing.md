@@ -54,7 +54,10 @@ network requests (with tokens removed), which helps the developer reproduce it.
   by itself (the repo has [`autoFixIssues`](fix-with-claude.md) on) or a developer adds the
   `tapthrough:fix` label.
 - Sending always posts the report as a comment on the PR first. Filing an issue is a second, separate step.
-- A new push resets the checklist, so the next round of testing starts clean.
+- A new push keeps checks on screens it didn't touch and clears the rest. Kept checks show the commit they
+  were made on, in the app and the PR comment. A push that changes dependencies or app config (`package.json`,
+  lockfiles, `app.json`, native folders, `.tapthrough/`) clears everything, since that can affect any screen.
+  The app says how many checks were cleared and why.
 
 ## Gate merges on it
 
@@ -64,9 +67,9 @@ Every PR gets a **Tapthrough** check on its latest commit:
 | --- | --- |
 | Failed | A step failed on this commit, or a report from the PR is broken on it |
 | In progress | Steps aren't all checked yet, or earlier reports and pushed fixes need a re-check |
-| Passed | Every step passed or was skipped on this commit, and every report from the PR is verified fixed |
+| Passed | Every step passed or was skipped, on this commit or on an earlier one for a screen the push didn't touch, and every report from the PR is verified fixed |
 | Neutral | No test plan and no reports, so there's nothing to verify |
 
 Reports marked as not from the PR never count. To require it before merging, add **Tapthrough** as a
-required status check in your branch protection rules or ruleset. A new push starts the check over, just as
-it resets the checklist.
+required status check in your branch protection rules or ruleset. A new push re-evaluates the check with the
+checks it keeps, the same way the checklist does.

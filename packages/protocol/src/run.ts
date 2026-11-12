@@ -33,6 +33,12 @@ export const Manifest = z.object({
   routes: z.array(RouteEntry),
   changedFiles: z.array(z.string()),
   affected: z.array(AffectedRoute),
+  /**
+   * Route path → every changed file that reaches its screen through imports or a
+   * layout above it, at any distance. Lets the cloud keep checklist results for
+   * screens a later commit didn't touch. Absent from older Actions.
+   */
+  reach: z.record(z.string(), z.array(z.string())).optional(),
   presets: z.array(PresetSummary),
 })
 export type Manifest = z.infer<typeof Manifest>

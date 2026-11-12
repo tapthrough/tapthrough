@@ -19798,6 +19798,12 @@ var Manifest = external_exports.object({
   routes: external_exports.array(RouteEntry),
   changedFiles: external_exports.array(external_exports.string()),
   affected: external_exports.array(AffectedRoute),
+  /**
+   * Route path → every changed file that reaches its screen through imports or a
+   * layout above it, at any distance. Lets the cloud keep checklist results for
+   * screens a later commit didn't touch. Absent from older Actions.
+   */
+  reach: external_exports.record(external_exports.string(), external_exports.array(external_exports.string())).optional(),
   presets: external_exports.array(PresetSummary)
 });
 var MAX_DIFF_LENGTH = 2e6;
@@ -19916,14 +19922,14 @@ function resolveImport(specifier, from, files, aliases) {
   }
   return void 0;
 }
-function affectedRoutesByImports(input3) {
-  const files = new Set([...input3.sources.keys()].filter((file2) => SOURCE.test(file2)));
+function importersOf(sources, aliases) {
+  const files = new Set([...sources.keys()].filter((file2) => SOURCE.test(file2)));
   const importedBy = /* @__PURE__ */ new Map();
-  for (const [file2, source] of input3.sources) {
+  for (const [file2, source] of sources) {
     if (!SOURCE.test(file2))
       continue;
     for (const specifier of importSpecifiers(source)) {
-      const target = resolveImport(specifier, file2, files, input3.aliases);
+      const target = resolveImport(specifier, file2, files, aliases);
       if (!target)
         continue;
       if (!importedBy.has(target))
@@ -19931,6 +19937,46 @@ function affectedRoutesByImports(input3) {
       importedBy.get(target)?.add(file2);
     }
   }
+  return importedBy;
+}
+function layoutsAbove(routeFile, layoutFiles) {
+  const dir = path.posix.dirname(routeFile);
+  return layoutFiles.filter((layout) => {
+    const layoutDir = path.posix.dirname(layout);
+    return dir === layoutDir || dir.startsWith(`${layoutDir}/`);
+  });
+}
+function routeReach(input3) {
+  const importedBy = importersOf(input3.sources, input3.aliases);
+  const inside = /* @__PURE__ */ new Map();
+  for (const changed of input3.changedFiles) {
+    const seen = /* @__PURE__ */ new Set([changed]);
+    let frontier = [changed];
+    while (frontier.length > 0) {
+      const next = [];
+      for (const file2 of frontier) {
+        for (const parent of importedBy.get(file2) ?? []) {
+          if (!seen.has(parent)) {
+            seen.add(parent);
+            next.push(parent);
+          }
+        }
+      }
+      frontier = next;
+    }
+    inside.set(changed, seen);
+  }
+  const reach = {};
+  for (const route of input3.routes) {
+    const shells = [route.file, ...layoutsAbove(route.file, input3.layouts)];
+    const files = input3.changedFiles.filter((changed) => shells.some((shell) => inside.get(changed)?.has(shell)));
+    if (files.length > 0)
+      reach[route.path] = files.sort();
+  }
+  return reach;
+}
+function affectedRoutesByImports(input3) {
+  const importedBy = importersOf(input3.sources, input3.aliases);
   const routeByFile = new Map(input3.routes.map((route) => [route.file, route]));
   const best = /* @__PURE__ */ new Map();
   const maxDistance = input3.maxDistance ?? 6;
@@ -20058,8 +20104,8 @@ async function oidcToken(audience) {
 }
 var MAX_SOURCE_FILES = 5e3;
 var MAX_SOURCE_BYTES = 512 * 1024;
-function traceAffected(root, appRoot, routes, changedFiles) {
-  if (routes.length === 0 || changedFiles.length === 0) return [];
+function traceAffected(root, appRoot, routes, layouts, changedFiles) {
+  if (routes.length === 0 || changedFiles.length === 0) return { affected: [], reach: {} };
   const listed = run("git", ["ls-files", "--", appRoot || "."], root).split("\n").filter((file2) => /\.(tsx?|jsx?|mjs|cjs)$/.test(file2) && !file2.includes("node_modules/")).slice(0, MAX_SOURCE_FILES);
   const sources = /* @__PURE__ */ new Map();
   for (const file2 of listed) {
@@ -20075,13 +20121,13 @@ function traceAffected(root, appRoot, routes, changedFiles) {
   } catch {
     tsconfig = null;
   }
-  return affectedRoutesByImports({
-    routes,
-    changedFiles,
-    sources,
-    aliases: aliasesFromTsconfig(tsconfig, appRoot || ".")
-  });
+  const aliases = aliasesFromTsconfig(tsconfig, appRoot || ".");
+  return {
+    affected: affectedRoutesByImports({ routes, changedFiles, sources, aliases }),
+    reach: routeReach({ routes, layouts, changedFiles, sources, aliases })
+  };
 }
+var LAYOUT = /(^|\/)(_layout|\+native-intent)\.[cm]?[jt]sx?$/;
 function buildManifest(workingDir, baseSha, headSha) {
   const root = run("git", ["rev-parse", "--show-toplevel"], workingDir).trim();
   const relative = path2.relative(root, workingDir);
@@ -20098,13 +20144,14 @@ function buildManifest(workingDir, baseSha, headSha) {
   }
   const files = appDir ? run("git", ["ls-files", appDir], root).split("\n").filter(Boolean) : [];
   const routes = appDir ? routesFromFiles(appDir, files) : [];
+  const layouts = files.filter((file2) => LAYOUT.test(file2));
   return {
     manifest: {
       apiVersion: 1,
       framework: "expo-router",
       routes,
       changedFiles,
-      affected: traceAffected(root, relative, routes, changedFiles),
+      ...traceAffected(root, relative, routes, layouts, changedFiles),
       presets: []
     },
     diff

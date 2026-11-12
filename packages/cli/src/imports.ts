@@ -115,6 +115,79 @@ export function resolveImport(
  * other components. Distance is the number of import hops (0 = the route file
  * itself changed); the closest path wins.
  */
+/** Who imports each file, from the files' own import statements. */
+function importersOf(sources: Map<string, string>, aliases: Aliases): Map<string, Set<string>> {
+  const files = new Set([...sources.keys()].filter((file) => SOURCE.test(file)))
+  const importedBy = new Map<string, Set<string>>()
+  for (const [file, source] of sources) {
+    if (!SOURCE.test(file)) continue
+    for (const specifier of importSpecifiers(source)) {
+      const target = resolveImport(specifier, file, files, aliases)
+      if (!target) continue
+      if (!importedBy.has(target)) importedBy.set(target, new Set())
+      importedBy.get(target)?.add(file)
+    }
+  }
+  return importedBy
+}
+
+/**
+ * Files that shape a route's screen besides its own file: the `_layout` files
+ * in its folder and every folder above it, up to the app directory.
+ */
+export function layoutsAbove(routeFile: string, layoutFiles: string[]): string[] {
+  const dir = path.posix.dirname(routeFile)
+  return layoutFiles.filter((layout) => {
+    const layoutDir = path.posix.dirname(layout)
+    return dir === layoutDir || dir.startsWith(`${layoutDir}/`)
+  })
+}
+
+/**
+ * For each route, every changed file that reaches its screen: the route file,
+ * a layout above it, or anything they import, at any distance. Unlike
+ * `affectedRoutesByImports` this is complete, so the cloud can tell that a
+ * commit did not touch a screen and keep its checklist results.
+ */
+export function routeReach(input: {
+  routes: RouteEntry[]
+  /** `_layout` files under the app directory. */
+  layouts: string[]
+  changedFiles: string[]
+  sources: Map<string, string>
+  aliases: Aliases
+}): Record<string, string[]> {
+  const importedBy = importersOf(input.sources, input.aliases)
+  // Everything each changed file ends up inside, itself included.
+  const inside = new Map<string, Set<string>>()
+  for (const changed of input.changedFiles) {
+    const seen = new Set([changed])
+    let frontier = [changed]
+    while (frontier.length > 0) {
+      const next: string[] = []
+      for (const file of frontier) {
+        for (const parent of importedBy.get(file) ?? []) {
+          if (!seen.has(parent)) {
+            seen.add(parent)
+            next.push(parent)
+          }
+        }
+      }
+      frontier = next
+    }
+    inside.set(changed, seen)
+  }
+  const reach: Record<string, string[]> = {}
+  for (const route of input.routes) {
+    const shells = [route.file, ...layoutsAbove(route.file, input.layouts)]
+    const files = input.changedFiles.filter((changed) =>
+      shells.some((shell) => inside.get(changed)?.has(shell)),
+    )
+    if (files.length > 0) reach[route.path] = files.sort()
+  }
+  return reach
+}
+
 export function affectedRoutesByImports(input: {
   routes: RouteEntry[]
   changedFiles: string[]
@@ -122,17 +195,7 @@ export function affectedRoutesByImports(input: {
   aliases: Aliases
   maxDistance?: number
 }): AffectedRoute[] {
-  const files = new Set([...input.sources.keys()].filter((file) => SOURCE.test(file)))
-  const importedBy = new Map<string, Set<string>>()
-  for (const [file, source] of input.sources) {
-    if (!SOURCE.test(file)) continue
-    for (const specifier of importSpecifiers(source)) {
-      const target = resolveImport(specifier, file, files, input.aliases)
-      if (!target) continue
-      if (!importedBy.has(target)) importedBy.set(target, new Set())
-      importedBy.get(target)?.add(file)
-    }
-  }
+  const importedBy = importersOf(input.sources, input.aliases)
 
   const routeByFile = new Map(input.routes.map((route) => [route.file, route]))
   const best = new Map<string, AffectedRoute>()

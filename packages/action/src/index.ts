@@ -1,7 +1,12 @@
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { affectedRoutesByImports, aliasesFromTsconfig, routesFromFiles } from '@tapthrough/cli'
+import {
+  affectedRoutesByImports,
+  aliasesFromTsconfig,
+  routeReach,
+  routesFromFiles,
+} from '@tapthrough/cli'
 import { MAX_DIFF_LENGTH, type Manifest, type RunReport } from '@tapthrough/protocol'
 import { parseEasUpdateJson } from './eas.js'
 import { type ExpoInfo, expoInfoFromConfig } from './expo-config.js'
@@ -46,9 +51,10 @@ function traceAffected(
   root: string,
   appRoot: string,
   routes: Manifest['routes'],
+  layouts: string[],
   changedFiles: string[],
-): Manifest['affected'] {
-  if (routes.length === 0 || changedFiles.length === 0) return []
+): Pick<Manifest, 'affected' | 'reach'> {
+  if (routes.length === 0 || changedFiles.length === 0) return { affected: [], reach: {} }
   const listed = run('git', ['ls-files', '--', appRoot || '.'], root)
     .split('\n')
     .filter((file) => /\.(tsx?|jsx?|mjs|cjs)$/.test(file) && !file.includes('node_modules/'))
@@ -68,13 +74,15 @@ function traceAffected(
   } catch {
     tsconfig = null
   }
-  return affectedRoutesByImports({
-    routes,
-    changedFiles,
-    sources,
-    aliases: aliasesFromTsconfig(tsconfig, appRoot || '.'),
-  })
+  const aliases = aliasesFromTsconfig(tsconfig, appRoot || '.')
+  return {
+    affected: affectedRoutesByImports({ routes, changedFiles, sources, aliases }),
+    reach: routeReach({ routes, layouts, changedFiles, sources, aliases }),
+  }
 }
+
+/** Files that wrap every screen below them: layouts, and the deep-link handler. */
+const LAYOUT = /(^|\/)(_layout|\+native-intent)\.[cm]?[jt]sx?$/
 
 function buildManifest(
   workingDir: string,
@@ -102,13 +110,14 @@ function buildManifest(
 
   const files = appDir ? run('git', ['ls-files', appDir], root).split('\n').filter(Boolean) : []
   const routes = appDir ? routesFromFiles(appDir, files) : []
+  const layouts = files.filter((file) => LAYOUT.test(file))
   return {
     manifest: {
       apiVersion: 1,
       framework: 'expo-router',
       routes,
       changedFiles,
-      affected: traceAffected(root, relative, routes, changedFiles),
+      ...traceAffected(root, relative, routes, layouts, changedFiles),
       presets: [],
     },
     diff,

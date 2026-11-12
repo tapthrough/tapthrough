@@ -14,11 +14,13 @@ import {
 import type { Bounds } from './core/bubble.js'
 import type {
   Checklist,
+  ChecklistReset,
   ChecklistScenario,
   NewerBuild,
   RecheckItem,
   SetupLine,
 } from './core/feedback.js'
+import { resetMessage } from './core/feedback.js'
 import {
   nextOpenScenario,
   otherStates,
@@ -298,6 +300,7 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
     body: (
       <>
         {checklist.newerBuild ? <NewerRow build={checklist.newerBuild} colors={colors} /> : null}
+        {checklist.reset ? <ResetRow reset={checklist.reset} colors={colors} /> : null}
         {recheck.map((item) => {
           const done = p.rechecked[item.id] ?? (item.stillBrokenHere ? 'still_broken' : undefined)
           return (
@@ -502,6 +505,11 @@ function stepView(
       <>
         <Text style={[text.headline, { color: colors.label }]}>{step.action}</Text>
         <Text style={[text.subhead, { color: colors.secondary }]}>Expect: {step.expect}</Text>
+        {step.result?.carriedFrom && result === step.result.result ? (
+          <Text style={[text.footnote, { color: colors.secondary }]}>
+            {`${step.result.result === 'pass' ? 'Passed' : step.result.result === 'fail' ? 'Failed' : 'Skipped'} on ${step.result.carriedFrom.slice(0, 7)}. Kept because later pushes didn’t change this screen.`}
+          </Text>
+        ) : null}
       </>
     ),
     footer: (
@@ -670,6 +678,20 @@ function Row({
       </View>
       <Icon name="chevron.right" size={13} color={colors.tertiary} />
     </Pressable>
+  )
+}
+
+function ResetRow({ reset, colors }: { reset: ChecklistReset; colors: Colors }) {
+  return (
+    <View style={[styles.newer, { backgroundColor: colors.fill }]}>
+      <Icon name="arrow.clockwise" size={20} color={colors.secondary} />
+      <View style={styles.rowText}>
+        <Text style={[text.subhead, styles.rowTitle, { color: colors.label }]}>
+          Checklist reset for this build
+        </Text>
+        <Text style={[text.footnote, { color: colors.secondary }]}>{resetMessage(reset)}</Text>
+      </View>
+    </View>
   )
 }
 

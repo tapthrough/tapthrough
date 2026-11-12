@@ -152,7 +152,32 @@ export interface ChecklistStep {
   index: number
   action: string
   expect: string
-  result: { result: StepResultValue; reporter: string | null; platform: Platform } | null
+  result: {
+    result: StepResultValue
+    reporter: string | null
+    platform: Platform
+    /** Checked on this earlier commit; the push since didn't touch the screen. */
+    carriedFrom?: string
+  } | null
+}
+
+/** Checks from an earlier commit that a push cleared, and why. */
+export interface ChecklistReset {
+  fromSha: string
+  cleared: number
+  reason: 'code' | 'config' | 'unknown'
+}
+
+/** Why the checklist started over, for a reviewer. */
+export function resetMessage(reset: ChecklistReset): string {
+  const checks = reset.cleared === 1 ? '1 check' : `${reset.cleared} checks`
+  const why =
+    reset.reason === 'code'
+      ? 'this push changed the code they cover'
+      : reset.reason === 'config'
+        ? 'this push changed dependencies or app config, which can affect any screen'
+        : 'Tapthrough couldn’t tell what this push changed'
+  return `${checks} from ${reset.fromSha.slice(0, 7)} ${reset.cleared === 1 ? 'was' : 'were'} cleared because ${why}. Checks on screens it didn’t touch were kept.`
 }
 
 /** A report from an earlier commit, to re-check on this build. */
@@ -217,6 +242,7 @@ export interface Checklist {
   recheck?: RecheckItem[]
   newerBuild?: NewerBuild | null
   library?: LibraryEntry[]
+  reset?: ChecklistReset | null
 }
 
 /** Whether the Review sheet has anything to show. */
