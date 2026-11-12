@@ -87,6 +87,40 @@ Then:
    "runtimeVersion": { "policy": "fingerprint" }
    ```
 
+   The fingerprint hashes your app config, including `seedHookUrl` and `apiUrl`, so changing either one
+   would need a new build. They never touch native code, so you can leave them out with a
+   `fingerprint.config.js` next to `app.json`:
+
+   ```js
+   /** @type {import('@expo/fingerprint').Config} */
+   module.exports = {
+     sourceSkips: [
+       // Expo's default ("balanced") skips…
+       'PackageJsonAndroidAndIosScriptsIfNotContainRun',
+       'ExpoConfigVersions',
+       'ExpoConfigRuntimeVersionIfString',
+       'EasJson',
+       'Easignore',
+       'AutolinkingConfigPaths',
+       // …plus `extra`, where the Tapthrough plugin writes the URLs.
+       'ExpoConfigExtraSection',
+     ],
+     // And the URLs as passed to the plugin.
+     fileHookTransform(source, chunk) {
+       if (source.type !== 'contents' || source.id !== 'expoConfig' || typeof chunk !== 'string') {
+         return chunk
+       }
+       const config = JSON.parse(chunk)
+       config.plugins = config.plugins?.map((plugin) =>
+         Array.isArray(plugin) && plugin[0] === '@tapthrough/expo' ? [plugin[0]] : plugin,
+       )
+       return JSON.stringify(config)
+     },
+   }
+   ```
+
+   Adding this file changes the fingerprint once, so add it before your first development build.
+
 ## 3. Make a development build
 
 ```sh
@@ -160,6 +194,8 @@ test data and a checklist:
 2. **Deploy a seed hook** that creates the test data on your staging backend. See the
    [seed hook README](../packages/seed/README.md). It only runs in `staging` or `development`, and only for
    the repos you list.
+   It can be a Supabase edge function, or an Expo Router API route on EAS Hosting next to your app.
+   Reviewers can then tap **Set Up and Start** in the Review panel and the app sets itself up.
 
 ## What reviewers do
 

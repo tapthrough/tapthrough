@@ -107,6 +107,38 @@ handler verifies it.
 The handler is a plain `(Request) => Promise<Response>`, so it also runs in Bun, Cloudflare Workers,
 Vercel or Node 18+.
 
+## Deploying as an Expo Router API route
+
+If your app uses Expo Router with `"web": { "output": "server" }`, the hook can live in the app's repo
+and deploy to [EAS Hosting](https://docs.expo.dev/eas/hosting/introduction/). API routes are left out of
+the native app bundle.
+
+```ts
+// src/app/api/seed+api.ts
+import { createSeedHandler } from '@tapthrough/seed'
+import { presets } from '../../tapthrough/presets'
+
+const handler = createSeedHandler({
+  appId: 'com.acme.notes',
+  repos: ['acme/notes'],
+  environment: process.env.TAPTHROUGH_ENV,
+  issuer: process.env.TAPTHROUGH_ISSUER,
+  presets,
+})
+
+export function POST(request: Request) {
+  return handler(request)
+}
+```
+
+```sh
+npx expo export --platform web
+npx eas-cli deploy --prod
+```
+
+Set `TAPTHROUGH_ENV` and `TAPTHROUGH_ISSUER` as EAS environment variables, then point the config plugin's
+`seedHookUrl` at `https://<your-app>.expo.app/api/seed`.
+
 ## Options
 
 | Option | Required | Description |

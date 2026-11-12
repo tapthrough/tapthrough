@@ -22,15 +22,32 @@ In the app, tap the round **Review** button on the right edge. If it's in the wa
 snaps to the nearer side and stays there for the session. It fades while you test, and its badge shows how
 many steps are left, a check when they've all passed, or **!** when one failed.
 
-- **See where you are.** The top of the checklist shows how many steps are checked, like **1 of 3 checked**.
-- **Pass or Fail each step.** Pass is recorded right away. Fail takes a screenshot of the app and lets you
-  say what happened.
+The button opens a panel over the app with what this PR needs checked. Tap the expand
+button to fill the screen. Tap the Review button again (now an ✕) to close it.
+
+1. **Pick something to check.** Each item says why it's on the list, like "This PR changed this screen."
+   The top shows how far you are, like **1 of 3 checked**.
+2. **Set up.** The item shows what setup does (signs you in as a test user, adds test data, opens the
+   screen) and its steps. Tap **Set Up and Start** and the app gets itself ready without leaving. Already
+   where you need to be? Tap **Skip Setup**. If setup can't run, the panel lists the same steps to do by
+   hand, then **I'm Ready**.
+3. **Pass or Fail each step.** One step at a time. Pass is recorded right away. Fail takes a screenshot of
+   the app and lets you say what happened.
+4. **Send.** The report shows the step you were on and what was expected. Tap the screenshot to leave it
+   out, or **Mark Up** to highlight what's wrong or blur personal data. After sending, say whether this PR
+   caused it or it was **Already broken**; Tapthrough suggests one. A PR bug can go straight to
+   **Ask Claude to Fix**; an old one becomes a GitHub issue.
+
+Also in the panel:
+
+- **Other states.** Every scenario in the app, not just the ones this PR touched, so you can jump to an
+  empty account or a viewer role and look around.
 - **Re-check earlier reports.** After a new push, reports from before show up first. Mark them **Fixed** or
   **Still broken**.
-- **Report something else.** For anything outside the plan: write what's wrong, and the screenshot comes
-  along. **Mark up** lets you highlight what's wrong or blur personal data before it's sent.
+- **Report Something Else.** For anything outside the plan: write what's wrong, and the screenshot comes
+  along.
 - **Get new builds.** When someone pushes to the PR, or Claude pushes a fix, a short notice appears at the
-  top and the Review button gets a yellow dot. Open the checklist and tap **Open** to switch to the new
+  top and the Review button gets a yellow dot. Tap **View**, or **Open** in the panel, to switch to the new
   build, then re-check.
 
 Your name (entered once) and device are attached. So are the screen you were on, recent errors and failed
