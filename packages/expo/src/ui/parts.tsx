@@ -28,6 +28,7 @@ const GLYPHS = {
   'tray.full.fill': '▤',
   'flag.fill': '⚑',
   'arrow.right': '→',
+  'arrow.up': '↑',
 } as const
 export type IconName = keyof typeof GLYPHS
 
@@ -99,31 +100,43 @@ export function Surface({
   )
 }
 
-/** A 44pt circle holding one symbol: back, close, expand. */
+/** A 44pt circle holding one symbol: back, close, expand, send. */
 export function CircleButton({
   icon,
   label,
   onPress,
   tint = false,
+  disabled = false,
+  busy = false,
 }: {
   icon: IconName
   label: string
   onPress: () => void
   tint?: boolean
+  disabled?: boolean
+  busy?: boolean
 }) {
   const colors = useColors()
+  const fg = tint ? '#FFFFFF' : colors.label
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled || busy}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled: disabled || busy, busy }}
       style={({ pressed }) => [
         styles.circle,
         { backgroundColor: tint ? colors.tint : colors.fill },
+        disabled && styles.disabled,
         pressed && styles.pressed,
       ]}
     >
-      <Icon name={icon} size={15} color={tint ? '#FFFFFF' : colors.label} />
+      {busy ? (
+        <ActivityIndicator color={fg} />
+      ) : (
+        <Icon name={icon} size={15} color={fg} weight={tint ? 'bold' : 'semibold'} />
+      )}
     </Pressable>
   )
 }

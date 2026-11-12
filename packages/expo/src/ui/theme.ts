@@ -19,6 +19,8 @@ const TABLE = {
   pass: { light: '#34C759', dark: '#30D158' },
   fail: { light: '#FF3B30', dark: '#FF453A' },
   tintFill: { light: 'rgba(0,122,255,0.12)', dark: 'rgba(10,132,255,0.22)' },
+  /** The selected segment of a segmented control. */
+  segment: { light: '#FFFFFF', dark: '#636366' },
 }
 
 type Name = keyof typeof TABLE

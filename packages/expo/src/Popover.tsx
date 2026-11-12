@@ -841,7 +841,7 @@ function Numbered({
 }
 
 /** Who's reviewing: a slim line once known, a field until then. Shown on the PR. */
-function ReviewerName({
+export function ReviewerName({
   name,
   onChange,
   colors,

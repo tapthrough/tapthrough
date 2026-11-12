@@ -13,7 +13,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   useWindowDimensions,
@@ -45,10 +44,18 @@ import {
 import { nextOpenStep, popoverPlacement, type Results, resultsFrom, stepId } from './core/review.js'
 import { useLaunchState } from './hooks.js'
 import { Overlay, useBackPress } from './Overlay.js'
-import { type Direction, type Nav, ReviewPopover, type SetupStatus } from './Popover.js'
+import {
+  type Direction,
+  type Nav,
+  ReviewerName,
+  ReviewPopover,
+  type SetupStatus,
+} from './Popover.js'
 import { controller } from './runtime.js'
 import { captureScreenshot, type Screenshot } from './screenshot.js'
-import { haptics } from './ui/native.js'
+import { haptics, useReduceMotion } from './ui/native.js'
+import { Capsule, CircleButton, Icon, Surface } from './ui/parts.js'
+import { SPRING, text, useColors } from './ui/theme.js'
 
 /** Remembered for the session, so reviewers type their name once. */
 let rememberedName = ''
@@ -78,6 +85,12 @@ function deviceInfo() {
     osVersion: String(constants.Release ?? Platform.Version),
     ...(model ? { model } : {}),
   }
+}
+
+/** e.g. "iPhone · iOS 26.1", for the composer's list of what's attached. */
+function deviceLabel() {
+  const { os, osVersion, model } = deviceInfo()
+  return `${model ?? os} · ${os} ${osVersion}`
 }
 
 function nextFrame() {
@@ -481,11 +494,14 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
           onRest={setAnchor}
         />
       ) : null}
+      {phase === 'composing' && screenshot ? <CaptureFlash /> : null}
       {phase === 'composing' ? (
         <Composer
           screenshot={screenshot}
           route={pathname}
           branch={preview.branch}
+          device={deviceLabel()}
+          hasScenario={Boolean(controller.lastScenarioId())}
           failedStep={failing?.step ?? null}
           onSend={async (input) => {
             const result = await sendFeedback(
@@ -542,27 +558,48 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
 }
 
 /**
- * A bottom sheet over a light scrim; tapping the scrim closes it. It's a plain
- * view in the overlay rather than a Modal, because on iOS a Modal can't present
- * while the app is already showing a native modal screen.
+ * A floating glass sheet that rises from the bottom edge and sits above the
+ * keyboard. It's a plain view in the overlay rather than a Modal, because on
+ * iOS a Modal can't present while the app is already showing a native modal
+ * screen. With `scrim`, the app behind dims and a tap on it closes the sheet.
  */
-function Sheet({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+function Sheet({
+  onClose,
+  scrim = false,
+  children,
+}: {
+  onClose: () => void
+  /** Dims the app behind, and a tap on it closes the sheet. */
+  scrim?: boolean
+  children: ReactNode
+}) {
   const { height } = useWindowDimensions()
+  const reduceMotion = useReduceMotion()
   const shown = useRef(new Animated.Value(0)).current
   useBackPress(onClose)
   useEffect(() => {
-    Animated.timing(shown, { toValue: 1, duration: 260, useNativeDriver: true }).start()
-  }, [shown])
+    if (reduceMotion) {
+      Animated.timing(shown, { toValue: 1, duration: 160, useNativeDriver: true }).start()
+      return
+    }
+    Animated.spring(shown, { toValue: 1, ...SPRING, useNativeDriver: true }).start()
+  }, [shown, reduceMotion])
 
   return (
     <KeyboardAvoidingView
-      style={[StyleSheet.absoluteFill, styles.backdrop]}
+      style={[
+        StyleSheet.absoluteFill,
+        styles.backdrop,
+        { paddingTop: screenBounds(0, 0).insetTop },
+      ]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <Animated.View style={[StyleSheet.absoluteFill, styles.scrim, { opacity: shown }]}>
+      {/* Always there, so taps outside the sheet never reach the app behind it. */}
+      <Animated.View style={[StyleSheet.absoluteFill, scrim && styles.scrim, { opacity: shown }]}>
         <Pressable
           style={StyleSheet.absoluteFill}
-          onPress={onClose}
+          onPress={scrim ? onClose : undefined}
+          accessible={scrim}
           accessibilityRole="button"
           accessibilityLabel="Close"
         />
@@ -570,36 +607,101 @@ function Sheet({ onClose, children }: { onClose: () => void; children: ReactNode
       <Animated.View
         style={[
           styles.sheet,
-          {
-            transform: [
-              { translateY: shown.interpolate({ inputRange: [0, 1], outputRange: [height, 0] }) },
-            ],
-          },
+          reduceMotion
+            ? { opacity: shown }
+            : {
+                transform: [
+                  {
+                    translateY: shown.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [height * 0.6, 0],
+                    }),
+                  },
+                ],
+              },
         ]}
         accessibilityViewIsModal
       >
-        <View style={styles.grab} />
-        {children}
+        <Surface radius={38} style={styles.sheetSurface}>
+          {children}
+        </Surface>
       </Animated.View>
     </KeyboardAvoidingView>
   )
 }
 
+/** Close or Done on the left, a centered title, and the main action on the right. */
+function SheetHeader({
+  title,
+  subtitle,
+  left,
+  right,
+}: {
+  title?: string
+  subtitle?: string
+  left?: ReactNode
+  right?: ReactNode
+}) {
+  const colors = useColors()
+  return (
+    <View style={styles.sheetHeader}>
+      <View style={styles.sheetSide}>{left}</View>
+      <View style={styles.sheetTitle}>
+        {title ? (
+          <Text style={[text.headline, styles.center, { color: colors.label }]} numberOfLines={1}>
+            {title}
+          </Text>
+        ) : null}
+        {subtitle ? (
+          <Text
+            style={[text.footnote, styles.center, { color: colors.secondary }]}
+            numberOfLines={1}
+          >
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+      <View style={[styles.sheetSide, styles.sheetSideRight]}>{right}</View>
+    </View>
+  )
+}
+
+/** A short white flash as the screen is captured, like the system screenshot. */
+function CaptureFlash() {
+  const opacity = useRef(new Animated.Value(0.85)).current
+  const [done, setDone] = useState(false)
+  useEffect(() => {
+    Animated.timing(opacity, { toValue: 0, duration: 260, useNativeDriver: true }).start(() =>
+      setDone(true),
+    )
+  }, [opacity])
+  if (done) return null
+  return (
+    <Animated.View
+      style={[StyleSheet.absoluteFill, styles.flash, { opacity }]}
+      pointerEvents="none"
+    />
+  )
+}
+
 /** "A new build is ready" for a moment at the top, then it's just the bubble's dot. */
 function NewBuildToast({ build, onPress }: { build: NewerBuild; onPress: () => void }) {
+  const colors = useColors()
   return (
     <View style={styles.toastWrap} pointerEvents="box-none">
       <Pressable
         onPress={onPress}
-        style={({ pressed }) => [styles.toast, pressed && styles.pressed]}
+        style={({ pressed }) => [pressed && styles.pressed]}
         accessibilityRole="button"
         accessibilityLiveRegion="polite"
       >
-        <View style={[styles.toastDot, { backgroundColor: COLORS.tape }]} />
-        <Text style={styles.toastText}>
-          {build.hasFix ? 'Claude’s fix is ready to test' : 'A new build is ready'}
-        </Text>
-        <Text style={styles.toastAction}>View</Text>
+        <Surface radius={24} style={styles.toast}>
+          <View style={[styles.toastDot, { backgroundColor: COLORS.tape }]} />
+          <Text style={[text.subhead, styles.strong, { color: colors.label }]}>
+            {build.hasFix ? 'Claude’s fix is ready to test' : 'A new build is ready'}
+          </Text>
+          <Text style={[text.subhead, styles.strong, { color: colors.tint }]}>View</Text>
+        </Surface>
       </Pressable>
     </View>
   )
@@ -608,13 +710,21 @@ function NewBuildToast({ build, onPress }: { build: NewerBuild; onPress: () => v
 type Status =
   | { kind: 'editing' }
   | { kind: 'sending' }
-  | { kind: 'sent'; commentUrl: string; findingId?: string; triage: Triage }
+  | {
+      kind: 'sent'
+      commentUrl: string
+      findingId?: string
+      triage: Triage
+      withScreenshot: boolean
+    }
   | { kind: 'error'; message: string }
 
 function Composer({
   screenshot,
   route,
   branch,
+  device,
+  hasScenario,
   failedStep,
   onSend,
   onSetCause,
@@ -625,6 +735,10 @@ function Composer({
   screenshot: Screenshot | null
   route: string
   branch: string | undefined
+  /** e.g. "iPhone · iOS 26.1", for the list of what's attached. */
+  device: string
+  /** The report carries the scenario's setup. */
+  hasScenario: boolean
   /** Set when the reviewer failed a step; the note becomes optional. */
   failedStep: ChecklistStep | null
   onSend: (input: {
@@ -640,6 +754,8 @@ function Composer({
   /** Closed after sending. */
   onClose: () => void
 }) {
+  const colors = useColors()
+  const { width, height } = useWindowDimensions()
   const [body, setBody] = useState('')
   const [name, setName] = useState(rememberedName)
   const [includeScreenshot, setIncludeScreenshot] = useState(screenshot !== null)
@@ -647,7 +763,9 @@ function Composer({
   const [annotating, setAnnotating] = useState(false)
   const [status, setStatus] = useState<Status>({ kind: 'editing' })
   const pr = branch?.match(/^pr-(\d+)$/)?.[1]
-  const canSend = (failedStep !== null || body.trim() !== '') && status.kind !== 'sending'
+  const sending = status.kind === 'sending'
+  const canSend = (failedStep !== null || body.trim() !== '') && !sending
+  const withShot = includeScreenshot && screenshot !== null
 
   async function send() {
     rememberedName = name.trim()
@@ -655,33 +773,47 @@ function Composer({
     const result = await onSend({
       body: body.trim(),
       ...(name.trim() ? { reporterName: name.trim() } : {}),
-      ...(includeScreenshot && screenshot ? { screenshot, annotations } : {}),
+      ...(withShot && screenshot ? { screenshot, annotations } : {}),
     })
-    setStatus(
-      result.ok
-        ? {
-            kind: 'sent',
-            commentUrl: result.commentUrl,
-            ...(result.findingId ? { findingId: result.findingId } : {}),
-            triage: {
-              cause: result.cause ?? 'unknown',
-              causeSource: result.causeSource ?? 'guess',
-              reasons: result.reasons ?? [],
-              ...(result.issueUrl ? { issueUrl: result.issueUrl } : {}),
-            },
-          }
-        : { kind: 'error', message: result.message },
-    )
+    if (!result.ok) {
+      haptics.warning()
+      setStatus({ kind: 'error', message: result.message })
+      return
+    }
+    haptics.success()
+    Keyboard.dismiss()
+    setStatus({
+      kind: 'sent',
+      commentUrl: result.commentUrl,
+      withScreenshot: withShot,
+      ...(result.findingId ? { findingId: result.findingId } : {}),
+      triage: {
+        cause: result.cause ?? 'unknown',
+        causeSource: result.causeSource ?? 'guess',
+        reasons: result.reasons ?? [],
+        ...(result.issueUrl ? { issueUrl: result.issueUrl } : {}),
+      },
+    })
   }
+
+  const attached = [
+    withShot ? 'this screenshot' : null,
+    `the screen (${route})`,
+    hasScenario ? 'the scenario’s setup' : null,
+    device,
+    'recent logs',
+  ].filter(Boolean)
+  const attachedText = `Attached: ${attached.slice(0, -1).join(', ')} and ${attached.at(-1)}.`
 
   return (
     <>
-      <Sheet onClose={status.kind === 'sent' ? onClose : onCancel}>
+      <Sheet onClose={status.kind === 'sent' ? onClose : onCancel} scrim={status.kind === 'sent'}>
         {status.kind === 'sent' ? (
           <Sent
             pr={pr}
             commentUrl={status.commentUrl}
             triage={status.triage}
+            withScreenshot={status.withScreenshot}
             onSetCause={
               status.findingId
                 ? (cause) => onSetCause(status.findingId as string, cause)
@@ -693,92 +825,126 @@ function Composer({
             onClose={onClose}
           />
         ) : (
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
-            <Text style={styles.title}>
-              {failedStep ? 'Step failed' : `Report an issue${pr ? ` on PR #${pr}` : ''}`}
-            </Text>
-            {failedStep ? (
-              <View style={styles.failedStep}>
-                <Text style={styles.stepAction}>{failedStep.action}</Text>
-                <Text style={styles.muted}>Expected: {failedStep.expect}</Text>
-              </View>
-            ) : null}
-            <Text style={styles.muted} numberOfLines={1}>
-              On {route}
-            </Text>
-            {screenshot ? (
-              <View style={styles.shotRow}>
-                <Image
-                  source={{ uri: `data:${screenshot.contentType};base64,${screenshot.base64}` }}
-                  style={[styles.shot, !includeScreenshot && styles.shotOff]}
-                  resizeMode="contain"
-                  accessibilityLabel="Screenshot of the current screen"
+          <>
+            <SheetHeader
+              title={failedStep ? 'Step Failed' : 'Report an Issue'}
+              subtitle={pr ? `PR #${pr}` : undefined}
+              left={
+                <CircleButton icon="xmark" label="Cancel" onPress={onCancel} disabled={sending} />
+              }
+              right={
+                <CircleButton
+                  icon="arrow.up"
+                  label="Send to PR"
+                  tint
+                  onPress={send}
+                  disabled={!canSend}
+                  busy={sending}
                 />
-                <View style={styles.shotToggle}>
-                  <Text style={styles.label}>Include screenshot</Text>
-                  <Switch value={includeScreenshot} onValueChange={setIncludeScreenshot} />
-                  {includeScreenshot ? (
+              }
+            />
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.form}
+            >
+              {failedStep ? (
+                <View style={styles.quote}>
+                  <View style={[styles.quoteMark, { backgroundColor: colors.fail }]}>
+                    <Icon name="xmark" size={10} color="#FFFFFF" weight="bold" />
+                  </View>
+                  <View style={styles.quoteText}>
+                    <Text style={[text.subhead, styles.strong, { color: colors.label }]}>
+                      {failedStep.action}
+                    </Text>
+                    <Text style={[text.footnote, { color: colors.secondary }]}>
+                      Expected: {failedStep.expect}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+              <TextInput
+                value={body}
+                onChangeText={setBody}
+                placeholder={
+                  failedStep
+                    ? 'What happened instead? (optional)'
+                    : 'What’s wrong? What did you expect?'
+                }
+                placeholderTextColor={colors.secondary}
+                multiline
+                autoFocus
+                style={[
+                  text.body,
+                  styles.note,
+                  { color: colors.label, backgroundColor: colors.fill },
+                ]}
+                accessibilityLabel="What's wrong"
+              />
+              {status.kind === 'error' ? (
+                <Text
+                  style={[text.footnote, styles.inset, { color: colors.fail }]}
+                  accessibilityRole="alert"
+                >
+                  {status.message}
+                </Text>
+              ) : null}
+              <View style={styles.attach}>
+                {screenshot ? (
+                  <Pressable
+                    onPress={() => setIncludeScreenshot((on) => !on)}
+                    accessibilityRole="switch"
+                    accessibilityLabel="Include screenshot"
+                    accessibilityState={{ checked: includeScreenshot }}
+                    style={[
+                      styles.thumb,
+                      {
+                        height: Math.round((THUMB_WIDTH * height) / Math.max(width, 1)),
+                        borderColor: colors.separator,
+                      },
+                      !includeScreenshot && styles.thumbOff,
+                    ]}
+                  >
+                    <Image
+                      source={{ uri: `data:${screenshot.contentType};base64,${screenshot.base64}` }}
+                      style={StyleSheet.absoluteFill}
+                      resizeMode="cover"
+                      accessibilityLabel="Screenshot of the current screen"
+                    />
+                    <View style={styles.thumbX}>
+                      <Icon
+                        name={includeScreenshot ? 'xmark' : 'arrow.clockwise'}
+                        size={8}
+                        color="#FFFFFF"
+                        weight="bold"
+                      />
+                    </View>
+                  </Pressable>
+                ) : null}
+                <View style={styles.attachMeta}>
+                  {withShot ? (
                     <Pressable
                       onPress={() => setAnnotating(true)}
                       accessibilityRole="button"
-                      hitSlop={8}
+                      style={({ pressed }) => [
+                        styles.pill,
+                        { backgroundColor: colors.tintFill },
+                        pressed && styles.pressed,
+                      ]}
                     >
-                      <Text style={styles.link}>
-                        {annotations.length
-                          ? `Mark up (${annotations.length})`
-                          : 'Mark up: highlight or blur'}
+                      <Text style={[text.subhead, styles.strong, { color: colors.tint }]}>
+                        {annotations.length ? `Mark Up (${annotations.length})` : 'Mark Up'}
                       </Text>
                     </Pressable>
                   ) : null}
+                  <Text style={[text.footnote, { color: colors.secondary }]}>{attachedText}</Text>
                 </View>
               </View>
-            ) : null}
-            <TextInput
-              value={body}
-              onChangeText={setBody}
-              placeholder={
-                failedStep
-                  ? 'What happened instead? (optional)'
-                  : "What's wrong? What did you expect?"
-              }
-              placeholderTextColor="#8a8f98"
-              multiline
-              autoFocus
-              style={[styles.input, styles.body]}
-              accessibilityLabel="What's wrong"
-            />
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="Your name (optional)"
-              placeholderTextColor="#8a8f98"
-              autoCapitalize="words"
-              style={styles.input}
-              accessibilityLabel="Your name"
-            />
-            {status.kind === 'error' ? (
-              <Text style={styles.error} accessibilityRole="alert">
-                {status.message}
-              </Text>
-            ) : null}
-            <View style={styles.actions}>
-              <Pressable onPress={onCancel} accessibilityRole="button" hitSlop={8}>
-                <Text style={styles.link}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={send}
-                disabled={!canSend}
-                style={[styles.primary, !canSend && styles.disabled]}
-                accessibilityRole="button"
-              >
-                {status.kind === 'sending' ? (
-                  <ActivityIndicator color="#ffffff" />
-                ) : (
-                  <Text style={styles.primaryText}>Send to PR</Text>
-                )}
-              </Pressable>
-            </View>
-          </ScrollView>
+              <View style={styles.inset}>
+                <ReviewerName name={name} onChange={setName} colors={colors} />
+              </View>
+            </ScrollView>
+          </>
         )}
       </Sheet>
       {/* A sibling of the sheet, so it can cover the whole screen. */}
@@ -797,6 +963,59 @@ function Composer({
   )
 }
 
+const THUMB_WIDTH = 55
+
+/** Two choices in one capsule; neither is picked until the cause is known. */
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  label,
+}: {
+  options: { value: T; title: string }[]
+  value: T | null
+  onChange: (value: T) => void
+  label: string
+}) {
+  const colors = useColors()
+  return (
+    <View
+      style={[styles.segments, { backgroundColor: colors.fill }]}
+      accessibilityRole="radiogroup"
+      accessibilityLabel={label}
+    >
+      {options.map((option) => {
+        const on = option.value === value
+        return (
+          <Pressable
+            key={option.value}
+            onPress={() => {
+              if (on) return
+              haptics.selection()
+              onChange(option.value)
+            }}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: on }}
+            style={[styles.segment, on && [styles.segmentOn, { backgroundColor: colors.segment }]]}
+          >
+            <Text
+              style={[
+                text.footnote,
+                styles.segmentText,
+                on && styles.strong,
+                { color: colors.label },
+              ]}
+              numberOfLines={1}
+            >
+              {option.title}
+            </Text>
+          </Pressable>
+        )
+      })}
+    </View>
+  )
+}
+
 /**
  * After a report is sent: whether it looks like the PR's bug, and the one tap
  * that follows. A bug the PR didn't cause goes to a prefilled GitHub issue.
@@ -805,6 +1024,7 @@ function Sent({
   pr,
   commentUrl,
   triage,
+  withScreenshot,
   onSetCause,
   onRequestFix,
   onClose,
@@ -812,12 +1032,16 @@ function Sent({
   pr: string | undefined
   commentUrl: string
   triage: Triage
+  withScreenshot: boolean
   onSetCause: ((cause: 'pr' | 'unrelated') => ReturnType<typeof sendCause>) | undefined
   onRequestFix: (() => ReturnType<typeof requestFix>) | undefined
   onClose: () => void
 }) {
+  const colors = useColors()
   const [cause, setCause] = useState(triage.cause)
   const [fix, setFix] = useState<'idle' | 'asking' | 'requested' | 'not_set_up'>('idle')
+  const [byReporter, setByReporter] = useState(triage.causeSource === 'reporter')
+  const [error, setError] = useState<string | null>(null)
 
   async function askFix() {
     if (!onRequestFix) return
@@ -831,9 +1055,6 @@ function Sent({
       setError(result.message)
     }
   }
-  const [byReporter, setByReporter] = useState(triage.causeSource === 'reporter')
-  const [error, setError] = useState<string | null>(null)
-  const where = pr ? `PR #${pr}` : 'the PR'
 
   async function choose(next: 'pr' | 'unrelated') {
     if (!onSetCause) return
@@ -848,145 +1069,171 @@ function Sent({
     }
   }
 
-  const heading =
-    cause === 'pr'
-      ? `Sent to ${where}`
-      : cause === 'unrelated'
-        ? 'Looks like this was already broken'
-        : `Sent to ${where}`
-  const summary =
-    cause === 'pr'
-      ? byReporter
-        ? 'Marked as caused by this PR. The author will see it in the PR.'
-        : 'This looks like it comes from this PR, so it’s on the PR for the author to fix.'
-      : cause === 'unrelated'
-        ? byReporter
-          ? 'Marked as not from this PR. It won’t block the merge; file it so it isn’t lost.'
-          : 'Nothing this PR changes reaches this screen, so it won’t block the merge. File it so it isn’t lost.'
-        : 'Did this PR cause it, or was it already broken?'
+  const why =
+    cause === 'unknown'
+      ? 'Did this PR cause it, or was it already broken?'
+      : !byReporter && triage.reasons.length > 0
+        ? triage.reasons.join(' ')
+        : cause === 'pr'
+          ? 'The author will see it on the PR.'
+          : 'It won’t block the merge. File it so it isn’t lost.'
 
   return (
-    <View style={styles.sent}>
-      <Text style={styles.title}>{heading}</Text>
-      <Text style={styles.muted}>{summary}</Text>
-      {!byReporter && triage.reasons.length > 0 ? (
-        <Text style={styles.reason}>{triage.reasons.join(' ')}</Text>
-      ) : null}
-      {cause === 'unknown' && onSetCause ? (
-        <View style={styles.causeRow}>
-          <Pressable
-            onPress={() => choose('pr')}
-            style={styles.secondary}
-            accessibilityRole="button"
-          >
-            <Text style={styles.secondaryText}>This PR caused it</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => choose('unrelated')}
-            style={styles.secondary}
-            accessibilityRole="button"
-          >
-            <Text style={styles.secondaryText}>Already broken</Text>
-          </Pressable>
+    <>
+      <SheetHeader right={<CircleButton icon="checkmark" label="Done" onPress={onClose} />} />
+      <View style={styles.sent}>
+        <View style={[styles.bigMark, { backgroundColor: colors.pass }]}>
+          <Icon name="checkmark" size={28} color="#FFFFFF" weight="bold" />
         </View>
-      ) : null}
-      {cause === 'unrelated' && triage.issueUrl ? (
-        <Pressable
-          onPress={() => Linking.openURL(triage.issueUrl as string)}
-          style={[styles.primary, styles.wide]}
-          accessibilityRole="link"
-        >
-          <Text style={styles.primaryText}>Create issue on GitHub</Text>
-        </Pressable>
-      ) : null}
-      {cause === 'pr' && onRequestFix ? (
-        fix === 'requested' ? (
-          <Text style={styles.reason}>
-            Claude is looking into it. If it finds the cause, it pushes a fix to the PR. When the
-            new build is ready, the Review button shows a dot.
-          </Text>
-        ) : fix === 'not_set_up' ? (
-          <Text style={styles.reason}>
-            Fix with Claude isn’t set up on this repo yet. The PR comment has the two setup steps
-            for a developer.
-          </Text>
-        ) : (
-          <Pressable
-            onPress={askFix}
-            disabled={fix === 'asking'}
-            style={[styles.secondary, styles.wide, fix === 'asking' && styles.disabled]}
-            accessibilityRole="button"
-          >
-            {fix === 'asking' ? (
-              <ActivityIndicator color="#1a73e8" />
-            ) : (
-              <Text style={styles.secondaryText}>Ask Claude to fix</Text>
-            )}
-          </Pressable>
-        )
-      ) : null}
-      {cause !== 'unknown' && onSetCause ? (
-        <Pressable
-          onPress={() => choose(cause === 'pr' ? 'unrelated' : 'pr')}
-          accessibilityRole="button"
-          hitSlop={8}
-        >
-          <Text style={styles.link}>
-            {cause === 'pr'
-              ? 'Not from this PR? It was already broken'
-              : 'Actually, this PR caused it'}
-          </Text>
-        </Pressable>
-      ) : null}
-      {error ? (
-        <Text style={styles.error} accessibilityRole="alert">
-          {error}
+        <Text style={[text.title2, styles.center, { color: colors.label }]}>
+          Sent to {pr ? `PR #${pr}` : 'the PR'}
         </Text>
-      ) : null}
-      <View style={styles.actions}>
-        <Pressable onPress={() => Linking.openURL(commentUrl)} accessibilityRole="link">
-          <Text style={styles.link}>View on GitHub</Text>
-        </Pressable>
-        <Pressable onPress={onClose} style={styles.primary} accessibilityRole="button">
-          <Text style={styles.primaryText}>Done</Text>
-        </Pressable>
+        <Text style={[text.subhead, styles.center, { color: colors.secondary }]}>
+          {withScreenshot ? 'Posted to the PR with your screenshot.' : 'Posted to the PR.'}
+        </Text>
       </View>
-    </View>
+      {onSetCause ? (
+        <Segmented
+          label="Cause"
+          value={cause === 'unknown' ? null : cause}
+          onChange={choose}
+          options={[
+            { value: 'pr', title: 'Caused by this PR' },
+            { value: 'unrelated', title: 'Already broken' },
+          ]}
+        />
+      ) : null}
+      <Text style={[text.footnote, styles.center, styles.why, { color: colors.secondary }]}>
+        {why}
+      </Text>
+      <View style={styles.next}>
+        {cause === 'pr' && onRequestFix ? (
+          fix === 'idle' ? (
+            <Capsule title="Ask Claude to Fix" onPress={askFix} />
+          ) : (
+            <View style={[styles.status, { backgroundColor: colors.fill }]}>
+              {fix === 'asking' ? <ActivityIndicator size="small" /> : null}
+              <Text style={[text.footnote, styles.statusText, { color: colors.label }]}>
+                {fix === 'asking'
+                  ? 'Asking Claude…'
+                  : fix === 'requested'
+                    ? 'Claude is on it. When the fix builds, the Review button shows a dot.'
+                    : 'Fix with Claude isn’t set up on this repo yet. The PR comment has the two setup steps for a developer.'}
+              </Text>
+            </View>
+          )
+        ) : null}
+        {cause === 'unrelated' && triage.issueUrl ? (
+          <Capsule
+            title="Create GitHub Issue"
+            onPress={() => Linking.openURL(triage.issueUrl as string)}
+          />
+        ) : null}
+        {error ? (
+          <Text
+            style={[text.footnote, styles.center, { color: colors.fail }]}
+            accessibilityRole="alert"
+          >
+            {error}
+          </Text>
+        ) : null}
+        <Capsule kind="plain" title="View on GitHub" onPress={() => Linking.openURL(commentUrl)} />
+      </View>
+    </>
   )
 }
 
 const styles = StyleSheet.create({
   pressed: { opacity: 0.7 },
+  strong: { fontWeight: '600' },
+  center: { textAlign: 'center' },
+  inset: { paddingHorizontal: 8 },
   backdrop: { justifyContent: 'flex-end' },
-  scrim: { backgroundColor: 'rgba(0, 0, 0, 0.18)' },
-  sheet: {
-    maxHeight: '85%',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    backgroundColor: '#ffffff',
+  scrim: { backgroundColor: 'rgba(0, 0, 0, 0.14)' },
+  flash: { backgroundColor: '#FFFFFF' },
+  sheet: { marginHorizontal: 8, marginBottom: 8, flexShrink: 1 },
+  sheetSurface: { flexShrink: 1, padding: 8, overflow: 'hidden' },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingBottom: 4 },
+  sheetSide: { width: 44 },
+  sheetSideRight: { alignItems: 'flex-end' },
+  sheetTitle: { flex: 1, minWidth: 0 },
+  sheetScroll: { flexGrow: 0, flexShrink: 1 },
+  form: { paddingHorizontal: 8, paddingTop: 6, paddingBottom: 12, gap: 14 },
+  quote: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', paddingHorizontal: 8 },
+  quoteMark: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    marginTop: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quoteText: { flex: 1, gap: 2 },
+  note: {
+    minHeight: 104,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 12,
+    textAlignVertical: 'top',
+  },
+  attach: { flexDirection: 'row', gap: 14, alignItems: 'flex-start', paddingHorizontal: 8 },
+  thumb: {
+    width: THUMB_WIDTH,
+    borderRadius: 9,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  thumbOff: { opacity: 0.3 },
+  thumbX: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachMeta: { flex: 1, gap: 8, alignItems: 'flex-start' },
+  pill: { paddingVertical: 7, paddingHorizontal: 16, borderRadius: 999 },
+  sent: { alignItems: 'center', gap: 6, paddingHorizontal: 20 },
+  bigMark: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  segments: {
+    flexDirection: 'row',
+    marginTop: 20,
+    marginHorizontal: 12,
+    padding: 3,
+    borderRadius: 999,
+  },
+  segment: { flex: 1, paddingVertical: 8, borderRadius: 999, alignItems: 'center' },
+  segmentOn: {
     shadowColor: '#000000',
     shadowOpacity: 0.12,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
-  grab: {
-    alignSelf: 'center',
-    width: 36,
-    height: 5,
-    marginTop: 8,
-    borderRadius: 3,
-    backgroundColor: '#d8dbe0',
-  },
-  sheetHead: { paddingHorizontal: 20, paddingTop: 10, gap: 10 },
-  bar: {
+  segmentText: { fontSize: 14 },
+  why: { paddingHorizontal: 24, paddingTop: 10 },
+  next: { paddingHorizontal: 12, paddingTop: 16, paddingBottom: 10, gap: 6 },
+  status: {
     flexDirection: 'row',
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
-    backgroundColor: '#eceef1',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 22,
   },
-  barFill: { height: 4 },
+  statusText: { flex: 1 },
   toastWrap: {
     position: 'absolute',
     top: Platform.OS === 'ios' ? 58 : 28,
@@ -998,111 +1245,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    backgroundColor: 'rgba(14, 22, 32, 0.94)',
-    shadowColor: '#000000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 6,
-  },
-  toastDot: { width: 8, height: 8, borderRadius: 4 },
-  toastText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
-  toastAction: { color: COLORS.tape, fontSize: 14, fontWeight: '700' },
-  newer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: '#fbf6df',
-    borderWidth: 1,
-    borderColor: COLORS.tape,
-  },
-  newerText: { flex: 1, gap: 2 },
-  newerTitle: { fontSize: 15, fontWeight: '700', color: COLORS.tapeInk },
-  newerMeta: { fontSize: 12, color: '#6b6040' },
-  newerButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: COLORS.ink,
-  },
-  newerButtonText: { color: '#ffffff', fontSize: 14, fontWeight: '600' },
-  nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  nameStrong: { fontWeight: '600', color: '#16181d' },
-  linkSmall: { fontSize: 14, fontWeight: '600', color: '#1a73e8' },
-  inputSlim: { paddingVertical: 8, fontSize: 15 },
-  form: { padding: 20, paddingTop: 14, paddingBottom: 32, gap: 12 },
-  sent: { padding: 20, paddingBottom: 40, gap: 8 },
-  reason: { fontSize: 13, color: '#5b6170', lineHeight: 18 },
-  causeRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
-  wide: { flex: 0, alignSelf: 'stretch', alignItems: 'center', marginTop: 4 },
-  title: { fontSize: 18, fontWeight: '700', color: '#16181d' },
-  muted: { fontSize: 13, color: '#5f6672' },
-  label: { fontSize: 14, color: '#16181d' },
-  shotRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
-  shot: { width: 72, height: 150, borderRadius: 8, backgroundColor: '#f1f2f4' },
-  shotOff: { opacity: 0.3 },
-  shotToggle: { flex: 1, gap: 6, alignItems: 'flex-start' },
-  input: {
-    fontSize: 16,
-    color: '#16181d',
-    borderWidth: 1,
-    borderColor: '#d8dbe0',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  body: { minHeight: 100, textAlignVertical: 'top' },
-  error: { fontSize: 14, color: '#c5221f' },
-  actions: {
-    marginTop: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  link: { fontSize: 16, fontWeight: '600', color: '#1a73e8' },
-  primary: {
-    minWidth: 120,
-    alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 18,
-    borderRadius: 10,
-    backgroundColor: '#1a73e8',
   },
-  primaryText: { color: '#ffffff', fontSize: 16, fontWeight: '600' },
-  secondary: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#1a73e8',
-  },
-  secondaryText: { color: '#1a73e8', fontSize: 15, fontWeight: '600' },
-  disabled: { opacity: 0.4 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  scenario: { gap: 10, marginTop: 4 },
-  scenarioTitle: { fontSize: 15, fontWeight: '700', color: '#16181d' },
-  step: {
-    gap: 4,
-    padding: 12,
-    borderRadius: 10,
-    backgroundColor: '#f4f5f7',
-  },
-  stepAction: { fontSize: 15, fontWeight: '600', color: '#16181d' },
-  stepButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 6 },
-  small: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
-  smallPass: { borderColor: COLORS.pass },
-  smallPassOn: { backgroundColor: COLORS.pass },
-  smallPassText: { color: COLORS.pass, fontSize: 14, fontWeight: '600' },
-  smallFail: { borderColor: COLORS.fail },
-  smallFailOn: { backgroundColor: COLORS.fail },
-  smallFailText: { color: COLORS.fail, fontSize: 14, fontWeight: '600' },
-  smallOnText: { color: '#ffffff' },
-  other: { alignSelf: 'center', paddingVertical: 12 },
-  failedStep: { gap: 2, padding: 10, borderRadius: 8, backgroundColor: '#fdecea' },
+  toastDot: { width: 8, height: 8, borderRadius: 4 },
 })
