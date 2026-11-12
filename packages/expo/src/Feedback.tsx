@@ -579,7 +579,7 @@ function Sheet({
   useBackPress(onClose)
   useEffect(() => {
     if (reduceMotion) {
-      Animated.timing(shown, { toValue: 1, duration: 160, useNativeDriver: true }).start()
+      shown.setValue(1)
       return
     }
     Animated.spring(shown, { toValue: 1, ...SPRING, useNativeDriver: true }).start()
@@ -607,18 +607,17 @@ function Sheet({
       <Animated.View
         style={[
           styles.sheet,
-          reduceMotion
-            ? { opacity: shown }
-            : {
-                transform: [
-                  {
-                    translateY: shown.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [height * 0.6, 0],
-                    }),
-                  },
-                ],
+          // Slides only: fading a view that holds glass stops the glass rendering.
+          {
+            transform: [
+              {
+                translateY: shown.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [height * 0.6, 0],
+                }),
               },
+            ],
+          },
         ]}
         accessibilityViewIsModal
       >
@@ -798,7 +797,7 @@ function Composer({
 
   const attached = [
     withShot ? 'this screenshot' : null,
-    `the screen (${route})`,
+    route === '/' ? 'the home screen' : `the screen (${route})`,
     hasScenario ? 'the scenario’s setup' : null,
     device,
     'recent logs',

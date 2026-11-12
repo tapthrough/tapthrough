@@ -91,20 +91,26 @@ interface Entry {
   other: boolean
 }
 
+/** Scenario reasons are written for the PR comment; drop its code marks here. */
+function plain(text: string | null | undefined) {
+  return text?.replace(/`([^`]*)`/g, '$1')
+}
+
 function entryFor(checklist: Checklist, key: string): Entry | undefined {
   const scenario = checklist.scenarios.find((s) => s.key === key)
   if (scenario) {
     return {
       key,
       title: scenario.title,
-      why: scenario.why,
+      why: plain(scenario.why),
       setup: scenario.setup,
       scenario,
       other: false,
     }
   }
   const state = checklist.library?.find((s) => s.key === key)
-  if (state) return { key, title: state.title, why: state.why, setup: state.setup, other: true }
+  if (state)
+    return { key, title: state.title, why: plain(state.why), setup: state.setup, other: true }
   return undefined
 }
 
@@ -186,7 +192,7 @@ export function ReviewPopover(props: ReviewPopoverProps) {
         styles.frame,
         frame,
         {
-          opacity: shown,
+          // No opacity here: fading a view that holds glass stops the glass rendering.
           transform: [{ scale: shown.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
           transformOrigin: `${placement.side} ${placement.vertical === 'above' ? 'bottom' : 'top'}`,
         },
@@ -198,7 +204,7 @@ export function ReviewPopover(props: ReviewPopoverProps) {
           style={[
             styles.column,
             full && styles.grow,
-            { opacity: fade, transform: [{ translateX: slide }] },
+            { opacity: Animated.multiply(fade, shown), transform: [{ translateX: slide }] },
           ]}
         >
           <View style={styles.header}>
@@ -338,7 +344,7 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
                 lead={<Badge icon="arrow.right.circle" colors={colors} />}
                 title={state.title}
                 subtitle={
-                  state.why ??
+                  plain(state.why) ??
                   (p.canSetUp && state.setup?.length ? 'Sets itself up' : 'Look around')
                 }
                 onPress={() => p.onNav({ view: 'brief', key: state.key }, 'forward')}
