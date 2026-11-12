@@ -10,173 +10,6 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import path2 from "node:path";
 
-// ../cli/dist/imports.js
-import path from "node:path";
-var SOURCE = /\.(tsx?|jsx?|mjs|cjs)$/;
-var EXTENSIONS = [
-  "",
-  ".tsx",
-  ".ts",
-  ".jsx",
-  ".js",
-  ".ios.tsx",
-  ".android.tsx",
-  ".native.tsx",
-  ".web.tsx"
-];
-var INDEX = ["/index.tsx", "/index.ts", "/index.jsx", "/index.js"];
-function importSpecifiers(source) {
-  const specifiers = /* @__PURE__ */ new Set();
-  const patterns = [
-    /\b(?:import|export)\s[^'"]*?\bfrom\s*['"]([^'"]+)['"]/g,
-    /\bimport\s*['"]([^'"]+)['"]/g,
-    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
-    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g
-  ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      if (match[1])
-        specifiers.add(match[1]);
-    }
-  }
-  return [...specifiers];
-}
-function stripJsonComments(text) {
-  let out = "";
-  let inString = false;
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    const next = text[i + 1];
-    if (inString) {
-      out += char;
-      if (char === "\\") {
-        out += next ?? "";
-        i++;
-      } else if (char === '"') {
-        inString = false;
-      }
-    } else if (char === '"') {
-      inString = true;
-      out += char;
-    } else if (char === "/" && next === "/") {
-      while (i < text.length && text[i] !== "\n")
-        i++;
-      out += "\n";
-    } else if (char === "/" && next === "*") {
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/"))
-        i++;
-      i++;
-    } else {
-      out += char;
-    }
-  }
-  return out.replace(/,(\s*[}\]])/g, "$1");
-}
-function aliasesFromTsconfig(tsconfig, dir) {
-  if (!tsconfig)
-    return [];
-  try {
-    const json2 = JSON.parse(stripJsonComments(tsconfig));
-    const paths = json2?.compilerOptions?.paths ?? {};
-    const baseUrl = String(json2?.compilerOptions?.baseUrl ?? ".");
-    return Object.entries(paths).flatMap(([alias, targets]) => {
-      const target = targets[0];
-      if (!alias.endsWith("/*") || !target?.endsWith("/*"))
-        return [];
-      return [
-        { prefix: alias.slice(0, -1), target: path.posix.join(dir, baseUrl, target.slice(0, -1)) }
-      ];
-    });
-  } catch {
-    return [];
-  }
-}
-function resolveImport(specifier, from, files, aliases) {
-  let base;
-  if (specifier.startsWith(".")) {
-    base = path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier));
-  } else {
-    const alias = aliases.find((a) => specifier.startsWith(a.prefix));
-    if (!alias)
-      return void 0;
-    base = path.posix.normalize(alias.target + specifier.slice(alias.prefix.length));
-  }
-  for (const candidate of [
-    ...EXTENSIONS.map((ext) => base + ext),
-    ...INDEX.map((ext) => base + ext)
-  ]) {
-    if (files.has(candidate))
-      return candidate;
-  }
-  return void 0;
-}
-function affectedRoutesByImports(input3) {
-  const files = new Set([...input3.sources.keys()].filter((file2) => SOURCE.test(file2)));
-  const importedBy = /* @__PURE__ */ new Map();
-  for (const [file2, source] of input3.sources) {
-    if (!SOURCE.test(file2))
-      continue;
-    for (const specifier of importSpecifiers(source)) {
-      const target = resolveImport(specifier, file2, files, input3.aliases);
-      if (!target)
-        continue;
-      if (!importedBy.has(target))
-        importedBy.set(target, /* @__PURE__ */ new Set());
-      importedBy.get(target)?.add(file2);
-    }
-  }
-  const routeByFile = new Map(input3.routes.map((route) => [route.file, route]));
-  const best = /* @__PURE__ */ new Map();
-  const maxDistance = input3.maxDistance ?? 6;
-  for (const changed of input3.changedFiles) {
-    const seen = /* @__PURE__ */ new Set([changed]);
-    let frontier = [changed];
-    for (let distance = 0; distance <= maxDistance && frontier.length > 0; distance++) {
-      const next = [];
-      for (const file2 of frontier) {
-        const route = routeByFile.get(file2);
-        if (route && (best.get(route.path)?.distance ?? Number.POSITIVE_INFINITY) > distance) {
-          best.set(route.path, { path: route.path, distance, via: changed });
-        }
-        for (const parent of importedBy.get(file2) ?? []) {
-          if (!seen.has(parent)) {
-            seen.add(parent);
-            next.push(parent);
-          }
-        }
-      }
-      frontier = next;
-    }
-  }
-  return [...best.values()].sort((a, b) => a.distance - b.distance || a.path.localeCompare(b.path));
-}
-
-// ../cli/dist/routes.js
-var SCREEN_FILE = /\.(tsx|ts|jsx|js)$/;
-var PLATFORM_SUFFIX = /\.(ios|android|native|web)$/;
-function routesFromFiles(appDir, files) {
-  const prefix = `${appDir.replace(/\/$/, "")}/`;
-  const byPath = /* @__PURE__ */ new Map();
-  for (const file2 of [...files].sort()) {
-    if (!file2.startsWith(prefix) || !SCREEN_FILE.test(file2))
-      continue;
-    const segments = file2.slice(prefix.length).replace(SCREEN_FILE, "").replace(PLATFORM_SUFFIX, "").split("/");
-    const name = segments.at(-1) ?? "";
-    if (segments.some((s) => s.startsWith("_") || s.startsWith("+") || s.includes("+api")))
-      continue;
-    if (name === "" || name.startsWith("("))
-      continue;
-    const urlSegments = segments.filter((s) => !(s.startsWith("(") && s.endsWith(")")));
-    if (urlSegments.at(-1) === "index")
-      urlSegments.pop();
-    const path3 = `/${urlSegments.join("/")}`;
-    if (!byPath.has(path3))
-      byPath.set(path3, { path: path3, file: file2 });
-  }
-  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
-}
-
 // ../../node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/classic/external.js
 var external_exports = {};
 __export(external_exports, {
@@ -19981,6 +19814,173 @@ var RunReport = external_exports.object({
   /** e.g. `#98` or `owner/repo#98`; absent when the PR links no ticket. */
   ticketRef: external_exports.string().optional()
 });
+
+// ../cli/dist/imports.js
+import path from "node:path";
+var SOURCE = /\.(tsx?|jsx?|mjs|cjs)$/;
+var EXTENSIONS = [
+  "",
+  ".tsx",
+  ".ts",
+  ".jsx",
+  ".js",
+  ".ios.tsx",
+  ".android.tsx",
+  ".native.tsx",
+  ".web.tsx"
+];
+var INDEX = ["/index.tsx", "/index.ts", "/index.jsx", "/index.js"];
+function importSpecifiers(source) {
+  const specifiers = /* @__PURE__ */ new Set();
+  const patterns = [
+    /\b(?:import|export)\s[^'"]*?\bfrom\s*['"]([^'"]+)['"]/g,
+    /\bimport\s*['"]([^'"]+)['"]/g,
+    /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      if (match[1])
+        specifiers.add(match[1]);
+    }
+  }
+  return [...specifiers];
+}
+function stripJsonComments(text) {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (inString) {
+      out += char;
+      if (char === "\\") {
+        out += next ?? "";
+        i++;
+      } else if (char === '"') {
+        inString = false;
+      }
+    } else if (char === '"') {
+      inString = true;
+      out += char;
+    } else if (char === "/" && next === "/") {
+      while (i < text.length && text[i] !== "\n")
+        i++;
+      out += "\n";
+    } else if (char === "/" && next === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/"))
+        i++;
+      i++;
+    } else {
+      out += char;
+    }
+  }
+  return out.replace(/,(\s*[}\]])/g, "$1");
+}
+function aliasesFromTsconfig(tsconfig, dir) {
+  if (!tsconfig)
+    return [];
+  try {
+    const json2 = JSON.parse(stripJsonComments(tsconfig));
+    const paths = json2?.compilerOptions?.paths ?? {};
+    const baseUrl = String(json2?.compilerOptions?.baseUrl ?? ".");
+    return Object.entries(paths).flatMap(([alias, targets]) => {
+      const target = targets[0];
+      if (!alias.endsWith("/*") || !target?.endsWith("/*"))
+        return [];
+      return [
+        { prefix: alias.slice(0, -1), target: path.posix.join(dir, baseUrl, target.slice(0, -1)) }
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+function resolveImport(specifier, from, files, aliases) {
+  let base;
+  if (specifier.startsWith(".")) {
+    base = path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier));
+  } else {
+    const alias = aliases.find((a) => specifier.startsWith(a.prefix));
+    if (!alias)
+      return void 0;
+    base = path.posix.normalize(alias.target + specifier.slice(alias.prefix.length));
+  }
+  for (const candidate of [
+    ...EXTENSIONS.map((ext) => base + ext),
+    ...INDEX.map((ext) => base + ext)
+  ]) {
+    if (files.has(candidate))
+      return candidate;
+  }
+  return void 0;
+}
+function affectedRoutesByImports(input3) {
+  const files = new Set([...input3.sources.keys()].filter((file2) => SOURCE.test(file2)));
+  const importedBy = /* @__PURE__ */ new Map();
+  for (const [file2, source] of input3.sources) {
+    if (!SOURCE.test(file2))
+      continue;
+    for (const specifier of importSpecifiers(source)) {
+      const target = resolveImport(specifier, file2, files, input3.aliases);
+      if (!target)
+        continue;
+      if (!importedBy.has(target))
+        importedBy.set(target, /* @__PURE__ */ new Set());
+      importedBy.get(target)?.add(file2);
+    }
+  }
+  const routeByFile = new Map(input3.routes.map((route) => [route.file, route]));
+  const best = /* @__PURE__ */ new Map();
+  const maxDistance = input3.maxDistance ?? 6;
+  for (const changed of input3.changedFiles) {
+    const seen = /* @__PURE__ */ new Set([changed]);
+    let frontier = [changed];
+    for (let distance = 0; distance <= maxDistance && frontier.length > 0; distance++) {
+      const next = [];
+      for (const file2 of frontier) {
+        const route = routeByFile.get(file2);
+        if (route && (best.get(route.path)?.distance ?? Number.POSITIVE_INFINITY) > distance) {
+          best.set(route.path, { path: route.path, distance, via: changed });
+        }
+        for (const parent of importedBy.get(file2) ?? []) {
+          if (!seen.has(parent)) {
+            seen.add(parent);
+            next.push(parent);
+          }
+        }
+      }
+      frontier = next;
+    }
+  }
+  return [...best.values()].sort((a, b) => a.distance - b.distance || a.path.localeCompare(b.path));
+}
+
+// ../cli/dist/routes.js
+var SCREEN_FILE = /\.(tsx|ts|jsx|js)$/;
+var PLATFORM_SUFFIX = /\.(ios|android|native|web)$/;
+function routesFromFiles(appDir, files) {
+  const prefix = `${appDir.replace(/\/$/, "")}/`;
+  const byPath = /* @__PURE__ */ new Map();
+  for (const file2 of [...files].sort()) {
+    if (!file2.startsWith(prefix) || !SCREEN_FILE.test(file2))
+      continue;
+    const segments = file2.slice(prefix.length).replace(SCREEN_FILE, "").replace(PLATFORM_SUFFIX, "").split("/");
+    const name = segments.at(-1) ?? "";
+    if (segments.some((s) => s.startsWith("_") || s.startsWith("+") || s.includes("+api")))
+      continue;
+    if (name === "" || name.startsWith("("))
+      continue;
+    const urlSegments = segments.filter((s) => !(s.startsWith("(") && s.endsWith(")")));
+    if (urlSegments.at(-1) === "index")
+      urlSegments.pop();
+    const path3 = `/${urlSegments.join("/")}`;
+    if (!byPath.has(path3))
+      byPath.set(path3, { path: path3, file: file2 });
+  }
+  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
 
 // src/eas.ts
 function parseEasUpdateJson(text) {

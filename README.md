@@ -12,6 +12,7 @@ and the shared protocol. The hosted service lives in a separate, private repo.
 - [Set up with your coding agent](docs/onboard-with-your-agent.md): one line for Claude Code, Cursor or Codex
 - [Plan files](docs/plan-files.md): land reviewers on the right screen with test data and a checklist
 - [Map your screens](docs/scenario-map.md): see which screens have scenarios, and check scenario files
+- [Have your coding agent check a PR](docs/agent-review.md): run the checklist on Expo Simulators and get a clip per step
 - [Reviewing a PR](docs/reviewing.md): for reviewers, including those who don't write code
 
 ## Packages

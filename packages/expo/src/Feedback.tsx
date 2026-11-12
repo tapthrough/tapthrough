@@ -28,7 +28,9 @@ import {
   type ChecklistStep,
   failedStepBody,
   fetchChecklist,
+  fileIssue,
   hasReviewItems,
+  type IssueFix,
   type NewerBuild,
   previewContextFromManifest,
   type RecheckItem,
@@ -538,6 +540,7 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
           onSetCause={(findingId, cause) =>
             sendCause({ preview, platform, findingId, cause }, { apiUrl })
           }
+          onFileIssue={(findingId) => fileIssue({ preview, platform, findingId }, { apiUrl })}
           onRequestFix={(findingId) =>
             requestFix(
               {
@@ -728,6 +731,7 @@ function Composer({
   onSend,
   onSetCause,
   onRequestFix,
+  onFileIssue,
   onCancel,
   onClose,
 }: {
@@ -748,6 +752,7 @@ function Composer({
   }) => ReturnType<typeof sendFeedback>
   onSetCause: (findingId: string, cause: 'pr' | 'unrelated') => ReturnType<typeof sendCause>
   onRequestFix: (findingId: string) => ReturnType<typeof requestFix>
+  onFileIssue: (findingId: string) => ReturnType<typeof fileIssue>
   /** Closed without sending. */
   onCancel: () => void
   /** Closed after sending. */
@@ -820,6 +825,9 @@ function Composer({
             }
             onRequestFix={
               status.findingId ? () => onRequestFix(status.findingId as string) : undefined
+            }
+            onFileIssue={
+              status.findingId ? () => onFileIssue(status.findingId as string) : undefined
             }
             onClose={onClose}
           />
@@ -942,6 +950,10 @@ function Composer({
               <View style={styles.inset}>
                 <ReviewerName name={name} onChange={setName} colors={colors} />
               </View>
+              <Text style={[text.footnote, styles.inset, { color: colors.secondary }]}>
+                Sending posts this as a comment on {pr ? `PR #${pr}` : 'the PR'}. If it was already
+                broken before this PR, you can file it as a GitHub issue next.
+              </Text>
             </ScrollView>
           </>
         )}
@@ -1015,9 +1027,22 @@ function Segmented<T extends string>({
   )
 }
 
+/** What filing an issue did, said plainly: where it went and whether Claude is on it. */
+function issueStatus(number: number, fix: IssueFix): string {
+  const filed = `Created issue #${number}, linked from the PR.`
+  if (fix === 'started')
+    return `${filed} It has the tapthrough:fix label, so Claude is starting a fix in its own PR.`
+  if (fix === 'not_set_up')
+    return `${filed} Claude can’t fix it yet: Fix with Claude isn’t set up on this repo. The issue says what a developer needs to do.`
+  if (fix === 'refused') return `${filed} Claude didn’t start. The issue says why.`
+  if (fix === 'off')
+    return `${filed} A developer can add the tapthrough:fix label to have Claude fix it.`
+  return `${filed}`
+}
+
 /**
  * After a report is sent: whether it looks like the PR's bug, and the one tap
- * that follows. A bug the PR didn't cause goes to a prefilled GitHub issue.
+ * that follows. A bug the PR didn't cause can be filed as a GitHub issue from here.
  */
 function Sent({
   pr,
@@ -1026,6 +1051,7 @@ function Sent({
   withScreenshot,
   onSetCause,
   onRequestFix,
+  onFileIssue,
   onClose,
 }: {
   pr: string | undefined
@@ -1034,6 +1060,7 @@ function Sent({
   withScreenshot: boolean
   onSetCause: ((cause: 'pr' | 'unrelated') => ReturnType<typeof sendCause>) | undefined
   onRequestFix: (() => ReturnType<typeof requestFix>) | undefined
+  onFileIssue: (() => ReturnType<typeof fileIssue>) | undefined
   onClose: () => void
 }) {
   const colors = useColors()
@@ -1041,6 +1068,36 @@ function Sent({
   const [fix, setFix] = useState<'idle' | 'asking' | 'requested' | 'not_set_up'>('idle')
   const [byReporter, setByReporter] = useState(triage.causeSource === 'reporter')
   const [error, setError] = useState<string | null>(null)
+  const [issue, setIssue] = useState<
+    { state: 'idle' | 'filing' } | { state: 'filed'; number: number; url: string; fix: IssueFix }
+  >({ state: 'idle' })
+
+  async function createIssue() {
+    if (!onFileIssue) {
+      if (triage.issueUrl) Linking.openURL(triage.issueUrl)
+      return
+    }
+    setIssue({ state: 'filing' })
+    setError(null)
+    const result = await onFileIssue()
+    if (result.ok) {
+      haptics.success()
+      setIssue({
+        state: 'filed',
+        number: result.issueNumber,
+        url: result.issueUrl,
+        fix: result.fix,
+      })
+      return
+    }
+    setIssue({ state: 'idle' })
+    // Tapthrough can't file it here (old server, or no Issues permission yet): GitHub's own form still works.
+    if (result.openInBrowser && triage.issueUrl) {
+      Linking.openURL(triage.issueUrl)
+      return
+    }
+    setError(result.message)
+  }
 
   async function askFix() {
     if (!onRequestFix) return
@@ -1068,14 +1125,20 @@ function Sent({
     }
   }
 
+  const where = pr ? `PR #${pr}` : 'the PR'
+  const guess =
+    cause !== 'unknown' && !byReporter && triage.reasons.length > 0
+      ? `Tapthrough’s guess: ${triage.reasons.join(' ')}`
+      : null
+  const autoFix = triage.issueFix === 'auto'
   const why =
     cause === 'unknown'
       ? 'Did this PR cause it, or was it already broken?'
-      : !byReporter && triage.reasons.length > 0
-        ? triage.reasons.join(' ')
-        : cause === 'pr'
-          ? 'The author will see it on the PR.'
-          : 'It won’t block the merge. File it so it isn’t lost.'
+      : cause === 'pr'
+        ? `It stays on ${where} as a comment for the author to fix. Claude can fix it on this PR’s branch.`
+        : autoFix
+          ? `It stays on ${where} as a note and won’t block the merge. A GitHub issue tracks it on its own, and Claude starts a fix for it in a separate PR.`
+          : `It stays on ${where} as a note and won’t block the merge. A GitHub issue tracks it on its own. A developer can add the tapthrough:fix label to have Claude fix it in a separate PR.`
 
   return (
     <>
@@ -1105,6 +1168,11 @@ function Sent({
       <Text style={[text.footnote, styles.center, styles.why, { color: colors.secondary }]}>
         {why}
       </Text>
+      {guess ? (
+        <Text style={[text.caption, styles.center, styles.why, { color: colors.tertiary }]}>
+          {guess}
+        </Text>
+      ) : null}
       <View style={styles.next}>
         {cause === 'pr' && onRequestFix ? (
           fix === 'idle' ? (
@@ -1122,11 +1190,27 @@ function Sent({
             </View>
           )
         ) : null}
-        {cause === 'unrelated' && triage.issueUrl ? (
-          <Capsule
-            title="Create GitHub Issue"
-            onPress={() => Linking.openURL(triage.issueUrl as string)}
-          />
+        {cause === 'unrelated' && (onFileIssue || triage.issueUrl) ? (
+          issue.state === 'filed' ? (
+            <>
+              <View style={[styles.status, { backgroundColor: colors.fill }]}>
+                <Text style={[text.footnote, styles.statusText, { color: colors.label }]}>
+                  {issueStatus(issue.number, issue.fix)}
+                </Text>
+              </View>
+              <Capsule
+                kind="plain"
+                title={`View Issue #${issue.number}`}
+                onPress={() => Linking.openURL(issue.url)}
+              />
+            </>
+          ) : (
+            <Capsule
+              title={autoFix ? 'Create Issue for Claude' : 'Create GitHub Issue'}
+              onPress={createIssue}
+              busy={issue.state === 'filing'}
+            />
+          )
         ) : null}
         {error ? (
           <Text

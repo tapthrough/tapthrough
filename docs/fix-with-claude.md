@@ -57,8 +57,18 @@ Add the `tapthrough:fix` label to an open issue. Claude fixes it on your default
 pull request that says `Fixes #<n>`, so merging it closes the issue. The fix PR gets its own Tapthrough preview.
 
 - **Who can start one:** people with write access. A label from anyone else is taken off with a note.
-- **Issues filed from a report** (the report's **Open it as a new issue** link) carry the report's screenshot,
+- **Issues filed from a report** (with **Create GitHub Issue** in the app, or **File as a GitHub issue** in the report's comment) carry the report's screenshot,
   screen, device and console errors to Claude. Other issues give Claude their title and text.
+- **Start Claude on report issues automatically:** add `.tapthrough/settings.json` to your default branch:
+
+  ```json
+  { "autoFixIssues": true }
+  ```
+
+  Issues filed from a report then get the `tapthrough:fix` label as they're opened, and Claude starts right
+  away. The app says so before the reviewer taps **Create Issue for Claude**. It's off by default because
+  reviewers in the app don't sign in, so anyone with the PR link could start a run. The file lives on the
+  default branch so only people with write access can turn it on. The daily fix limit still applies.
 - **Progress:** one comment on the issue follows the run and links the PR when it opens.
 - **When Claude changes nothing,** the comment says why and the label comes off. Add it again to retry.
 - **Branch:** `tapthrough/fix-<n>`. It's Tapthrough's own, so a retry replaces it.

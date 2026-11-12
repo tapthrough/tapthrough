@@ -3,6 +3,7 @@ import {
   checklistProgress,
   failedStepBody,
   fetchChecklist,
+  fileIssue,
   hasReviewItems,
   previewContextFromManifest,
   progressLabel,
@@ -312,6 +313,49 @@ describe('requestFix', () => {
       },
     )
     expect(limited).toEqual({ ok: false, message: 'Too many' })
+  })
+})
+
+describe('fileIssue', () => {
+  const preview = {
+    updateGroupId: 'g',
+    projectId: '11111111-2222-4333-8444-555555555555',
+    branch: 'pr-1',
+  }
+  const call = (status: number, body: unknown) =>
+    fileIssue(
+      { preview, platform: 'ios', findingId: 'f1' },
+      {
+        apiUrl: 'https://t.test/',
+        fetch: (async (url: string) => {
+          expect(url).toBe('https://t.test/api/v1/findings/f1/issue')
+          return new Response(JSON.stringify(body), { status })
+        }) as typeof fetch,
+      },
+    )
+
+  it('returns the filed issue', async () => {
+    await expect(
+      call(200, { issueNumber: 21, issueUrl: 'https://github.com/a/b/issues/21', fix: 'started' }),
+    ).resolves.toEqual({
+      ok: true,
+      issueNumber: 21,
+      issueUrl: 'https://github.com/a/b/issues/21',
+      fix: 'started',
+    })
+  })
+
+  it("falls back to the browser when Tapthrough can't file it", async () => {
+    const denied = await call(403, { error: { code: 'github_denied', message: 'No permission' } })
+    expect(denied).toEqual({ ok: false, message: 'No permission', openInBrowser: true })
+    // An older server without the endpoint.
+    await expect(call(404, {})).resolves.toMatchObject({ ok: false, openInBrowser: true })
+  })
+
+  it('shows other errors in the app', async () => {
+    await expect(
+      call(409, { error: { code: 'busy', message: 'Already being filed' } }),
+    ).resolves.toEqual({ ok: false, message: 'Already being filed', openInBrowser: false })
   })
 })
 

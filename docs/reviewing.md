@@ -47,8 +47,13 @@ network requests (with tokens removed), which helps the developer reproduce it.
 - After sending, the app shows the guess. Tap once to correct it, or to answer when Tapthrough can't tell.
   A failed step always counts as the PR's.
 - Reports that aren't from the PR are listed apart under **Noticed while testing**. They don't count as open
-  and don't need a re-check. **Create issue on GitHub** in the app, or the link under the report, fills in a
-  GitHub issue for you to submit.
+  and don't need a re-check. Tap **Create GitHub Issue** in the app, or tick **File as a GitHub issue** in
+  the report's PR comment, and Tapthrough opens the issue with the report's screenshot and details and
+  links it from the PR. You don't need to sign in to GitHub on the phone. The checkbox only counts for
+  people with write access to the repo. The app says before you tap whether Claude will start on the issue
+  by itself (the repo has [`autoFixIssues`](fix-with-claude.md) on) or a developer adds the
+  `tapthrough:fix` label.
+- Sending always posts the report as a comment on the PR first. Filing an issue is a second, separate step.
 - A new push resets the checklist, so the next round of testing starts clean.
 
 ## Gate merges on it

@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
-import { parseLibrary, parsePlanFile, SCENARIO_DIR } from '@tapthrough/protocol'
+import { Platform, parseLibrary, parsePlanFile, SCENARIO_DIR } from '@tapthrough/protocol'
+import {
+  DEFAULT_SERVER,
+  fetchAgentPlan,
+  formatAgentPlan,
+  parseLinkRef,
+  requestLaunch,
+} from './agent.js'
 import { checkScenarios, formatIssues } from './check.js'
 import { buildMap, formatMap } from './map.js'
 import { loadProject, type Project } from './project.js'
@@ -10,13 +17,20 @@ const HELP = `Usage: tapthrough <command> [options]
 Commands:
   map     List your app's screens and the scenarios that open each one
   check   Validate .tapthrough/scenarios and .tapthrough/plans against your routes
+  plan    <pr-link>  What to check on a PR, for an agent driving a simulator
+  launch  <pr-link> --scenario <key>  Print a single-use link that signs in,
+          seeds and opens one scenario (expires in 15 minutes)
 
 Options:
-  --dir <path>  The Expo app's directory (default: current directory)
-  --json        Print machine-readable output (map only)
-  -h, --help    Show this help
+  --dir <path>         The Expo app's directory (default: current directory)
+  --platform <p>       ios or android (plan and launch; default: ios)
+  --scenario <key>     The scenario to launch
+  --server <url>       Tapthrough server for bare link IDs (default: $TAPTHROUGH_URL or ${DEFAULT_SERVER})
+  --json               Print machine-readable output (map, plan, launch)
+  -h, --help           Show this help
 
-Docs: https://github.com/tapthrough/tapthrough/blob/main/docs/scenario-map.md`
+Docs: https://github.com/tapthrough/tapthrough/blob/main/docs/scenario-map.md
+      https://github.com/tapthrough/tapthrough/blob/main/docs/agent-review.md`
 
 function readLibrary(project: Project) {
   const files = project
@@ -36,13 +50,16 @@ function readPlans(project: Project) {
     })
 }
 
-function main(argv: string[]): number {
+async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
     options: {
       dir: { type: 'string', default: '.' },
       json: { type: 'boolean', default: false },
+      platform: { type: 'string', default: 'ios' },
+      scenario: { type: 'string' },
+      server: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   })
@@ -50,6 +67,36 @@ function main(argv: string[]): number {
   if (values.help || !command) {
     console.log(HELP)
     return command || values.help ? 0 : 1
+  }
+
+  if (command === 'plan' || command === 'launch') {
+    const ref = positionals[1]
+    if (!ref) {
+      console.error(`Pass the PR link from the Tapthrough comment: tapthrough ${command} <pr-link>`)
+      return 1
+    }
+    const platform = Platform.safeParse(values.platform)
+    if (!platform.success) {
+      console.error(`--platform must be ios or android, not "${values.platform}".`)
+      return 1
+    }
+    const link = parseLinkRef(ref, values.server ?? process.env.TAPTHROUGH_URL ?? DEFAULT_SERVER)
+
+    if (command === 'plan') {
+      const plan = await fetchAgentPlan(link)
+      console.log(
+        values.json ? JSON.stringify(plan, null, 2) : formatAgentPlan(plan, ref, platform.data),
+      )
+      return plan.expired ? 1 : 0
+    }
+
+    if (!values.scenario) {
+      console.error('Pass --scenario <key>. `tapthrough plan <pr-link>` lists them.')
+      return 1
+    }
+    const launch = await requestLaunch(link, { platform: platform.data, scenario: values.scenario })
+    console.log(values.json ? JSON.stringify(launch, null, 2) : launch.launchUrl)
+    return 0
   }
 
   const project = loadProject(values.dir)
@@ -79,9 +126,12 @@ function main(argv: string[]): number {
   return 1
 }
 
-try {
-  process.exitCode = main(process.argv.slice(2))
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error)
-  process.exitCode = 1
-}
+main(process.argv.slice(2)).then(
+  (code) => {
+    process.exitCode = code
+  },
+  (error: unknown) => {
+    console.error(error instanceof Error ? error.message : error)
+    process.exitCode = 1
+  },
+)

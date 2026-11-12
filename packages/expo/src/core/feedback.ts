@@ -82,6 +82,8 @@ export interface Triage {
   reasons: string[]
   /** GitHub's prefilled new-issue form, for bugs the PR didn't cause. */
   issueUrl?: string
+  /** `auto`: an issue filed from here gets `tapthrough:fix` and Claude starts. `label`: a developer adds it. */
+  issueFix?: 'auto' | 'label'
 }
 
 export type FeedbackResult =
@@ -138,6 +140,7 @@ export async function sendFeedback(
       causeSource: body.causeSource ?? 'guess',
       reasons: (body.reasons ?? []).map(plainReason),
       ...(body.issueUrl ? { issueUrl: body.issueUrl } : {}),
+      ...(body.issueFix === 'auto' || body.issueFix === 'label' ? { issueFix: body.issueFix } : {}),
     }
   }
   return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
@@ -386,6 +389,68 @@ export async function requestFix(
     return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
   } catch {
     return { ok: false, message: "Couldn't reach Tapthrough. Check your connection and try again." }
+  }
+}
+
+/** What happened to Claude after filing; `off` means a developer adds the label, null that it was filed before. */
+export type IssueFix = 'started' | 'not_set_up' | 'refused' | 'off' | null
+
+export type IssueFileResult =
+  | { ok: true; issueNumber: number; issueUrl: string; fix: IssueFix }
+  /** `openInBrowser`: Tapthrough can't file it here, so offer GitHub's prefilled form instead. */
+  | { ok: false; message: string; openInBrowser: boolean }
+
+/**
+ * Files a report as a GitHub issue through Tapthrough, so the reporter doesn't
+ * need to sign in to GitHub on the phone. Never throws.
+ */
+export async function fileIssue(
+  input: { preview: PreviewContext; platform: Platform; findingId: string },
+  options: { apiUrl: string; fetch?: typeof fetch },
+): Promise<IssueFileResult> {
+  const doFetch = options.fetch ?? fetch
+  try {
+    const response = await doFetch(
+      `${options.apiUrl.replace(/\/$/, '')}/api/v1/findings/${encodeURIComponent(input.findingId)}/issue`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiVersion: 1,
+          updateGroupId: input.preview.updateGroupId,
+          projectId: input.preview.projectId,
+          platform: input.platform,
+        }),
+      },
+    )
+    const body = (await response.json().catch(() => undefined)) as
+      | {
+          issueNumber?: number
+          issueUrl?: string
+          fix?: IssueFix
+          error?: { code?: string; message?: string }
+        }
+      | undefined
+    if (response.ok && body?.issueNumber && body.issueUrl) {
+      const fix = ['started', 'not_set_up', 'refused', 'off'].includes(String(body.fix))
+        ? (body.fix as IssueFix)
+        : null
+      return { ok: true, issueNumber: body.issueNumber, issueUrl: body.issueUrl, fix }
+    }
+    // A server from before this endpoint answers 404 with no error code.
+    const openInBrowser =
+      body?.error?.code === 'github_denied' || (response.status === 404 && !body?.error?.code)
+    return {
+      ok: false,
+      message: body?.error?.message ?? `Tapthrough returned ${response.status}.`,
+      openInBrowser,
+    }
+  } catch {
+    return {
+      ok: false,
+      message: "Couldn't reach Tapthrough. Check your connection and try again.",
+      openInBrowser: false,
+    }
   }
 }
 
