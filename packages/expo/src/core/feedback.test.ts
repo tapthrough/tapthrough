@@ -7,6 +7,7 @@ import {
   previewContextFromManifest,
   progressLabel,
   requestFix,
+  requestLaunch,
   reviewBadge,
   scenarioIdFromToken,
   sendCause,
@@ -362,5 +363,60 @@ describe('checklist progress and badge', () => {
   it('opens the sheet for a newer build even without steps', () => {
     const newer = { sha: 'def', updateGroupId: 'g2', openUrl: null, hasFix: false }
     expect(hasReviewItems(checklist([], { newerBuild: newer }))).toBe(true)
+  })
+})
+
+describe('requestLaunch', () => {
+  const ctx = { updateGroupId: 'g1', projectId: 'p1', branch: 'pr-8' }
+
+  it('posts the scenario and returns the launch link', async () => {
+    const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      Response.json({ launchUrl: 'notes://tapthrough/launch?t=abc' }),
+    )
+    const result = await requestLaunch(
+      { preview: ctx, platform: 'ios', scenarioKey: 'pin-a-note' },
+      { apiUrl: 'https://t/', fetch },
+    )
+    expect(result).toEqual({ ok: true, launchUrl: 'notes://tapthrough/launch?t=abc' })
+    const [url, init] = fetch.mock.calls[0] ?? []
+    expect(url).toBe('https://t/api/v1/checklist/launch')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      apiVersion: 1,
+      updateGroupId: 'g1',
+      projectId: 'p1',
+      platform: 'ios',
+      scenario: 'pin-a-note',
+    })
+  })
+
+  it("passes on the server's message, and explains an older server", async () => {
+    const refused = vi.fn(async () =>
+      Response.json(
+        { error: { message: "The repo's URL scheme isn't known yet" } },
+        { status: 409 },
+      ),
+    )
+    expect(
+      await requestLaunch(
+        { preview: ctx, platform: 'ios', scenarioKey: 'k' },
+        { apiUrl: 'https://t', fetch: refused },
+      ),
+    ).toEqual({ ok: false, message: "The repo's URL scheme isn't known yet" })
+    const old = vi.fn(async () => new Response('Not found', { status: 404 }))
+    expect(
+      await requestLaunch(
+        { preview: ctx, platform: 'ios', scenarioKey: 'k' },
+        { apiUrl: 'https://t', fetch: old },
+      ),
+    ).toEqual({ ok: false, message: 'This version of Tapthrough can’t set the app up yet.' })
+    const offline = vi.fn(async () => {
+      throw new TypeError('Network request failed')
+    })
+    expect(
+      await requestLaunch(
+        { preview: ctx, platform: 'ios', scenarioKey: 'k' },
+        { apiUrl: 'https://t', fetch: offline },
+      ),
+    ).toMatchObject({ ok: false })
   })
 })

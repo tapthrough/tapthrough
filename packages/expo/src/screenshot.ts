@@ -38,16 +38,27 @@ export async function captureScreenshot(): Promise<Screenshot | null> {
   if (!shot) return null
   const { width, height } = Dimensions.get('window')
   const targetWidth = Math.min(720, Math.round(width * 2))
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const base64 = await shot.captureScreen({
-      format: 'jpg',
-      quality: 0.7,
-      result: 'base64',
-      width: targetWidth,
-      height: Math.round((targetWidth * height) / width),
-    })
-    return { contentType: 'image/jpeg', base64 }
+    const base64 = await Promise.race([
+      shot.captureScreen({
+        format: 'jpg',
+        quality: 0.7,
+        result: 'base64',
+        width: targetWidth,
+        height: Math.round((targetWidth * height) / width),
+      }),
+      // The native capture can stall on some screens; the report shouldn't wait on it.
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), CAPTURE_TIMEOUT_MS)
+      }),
+    ])
+    return base64 ? { contentType: 'image/jpeg', base64 } : null
   } catch {
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
+
+const CAPTURE_TIMEOUT_MS = 2500

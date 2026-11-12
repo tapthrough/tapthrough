@@ -180,4 +180,35 @@ describe('runLaunch', () => {
     const { deps: d } = deps({ reset: undefined, applyFlags: undefined })
     expect(await runLaunch('tok', d)).toMatchObject({ ok: true })
   })
+
+  it('reports each stage as it starts, interleaved with the work', async () => {
+    const { deps: d, calls } = deps()
+    d.onStage = (stage) => calls.push(`stage:${stage}`)
+    await runLaunch('tok', d)
+    expect(calls).toEqual([
+      'stage:seeding',
+      'stage:resetting',
+      'reset:query',
+      'reset:storage',
+      'stage:signing_in',
+      'signIn',
+      'stage:opening',
+      'flags',
+      'navigate:/notes/n%201/edit',
+    ])
+  })
+
+  it('stops reporting stages at the part that failed', async () => {
+    const stages: string[] = []
+    const { deps: d } = deps({
+      auth: {
+        signIn: async () => {
+          throw new Error('no')
+        },
+      },
+      onStage: (stage) => stages.push(stage),
+    })
+    await runLaunch('tok', d)
+    expect(stages).toEqual(['seeding', 'resetting', 'signing_in'])
+  })
 })

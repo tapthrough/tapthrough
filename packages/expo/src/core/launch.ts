@@ -21,7 +21,12 @@ export interface LaunchDeps {
   applyFlags?: (flags: Flags) => void
   navigate: (path: string) => void | Promise<void>
   fetch?: typeof fetch
+  /** Called as each part of the launch starts, so a UI can show progress. */
+  onStage?: (stage: LaunchStage) => void
 }
+
+/** The parts of a launch, in order. */
+export type LaunchStage = 'seeding' | 'resetting' | 'signing_in' | 'opening'
 
 export interface LaunchError {
   code: string
@@ -52,6 +57,7 @@ export async function runLaunch(token: string, deps: LaunchDeps): Promise<Launch
     }
   }
 
+  deps.onStage?.('seeding')
   let response: Response
   try {
     response = await doFetch(deps.seedHookUrl, {
@@ -83,18 +89,21 @@ export async function runLaunch(token: string, deps: LaunchDeps): Promise<Launch
   }
 
   // Reset before signing in, so clearing persisted keys can't remove the new session.
+  deps.onStage?.('resetting')
   try {
     for (const target of deps.reset ?? []) await target()
   } catch (error) {
     return fail('reset_failed', `Couldn't clear local data: ${messageOf(error)}`)
   }
 
+  deps.onStage?.('signing_in')
   try {
     await deps.auth.signIn(seeded.data.session)
   } catch (error) {
     return fail('sign_in_failed', `Couldn't sign in as the test user: ${messageOf(error)}`)
   }
 
+  deps.onStage?.('opening')
   deps.applyFlags?.(seeded.data.flags)
 
   try {

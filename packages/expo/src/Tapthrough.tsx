@@ -92,7 +92,9 @@ export function Tapthrough({
   return (
     <>
       {children}
-      {isEnabled && feedback ? <ReportButton apiUrl={apiUrl ?? config.apiUrl} /> : null}
+      {isEnabled && feedback ? (
+        <ReportButton apiUrl={apiUrl ?? config.apiUrl} canSetUp={Boolean(hookUrl)} />
+      ) : null}
       {isEnabled ? <LaunchOverlay /> : null}
     </>
   )
@@ -100,6 +102,8 @@ export function Tapthrough({
 
 function LaunchOverlay() {
   const state = useLaunchState()
+  // The Review popover shows its own progress for setups it started.
+  if (state.status !== 'idle' && state.source === 'app') return null
   if (state.status === 'launching') {
     return (
       <View style={styles.backdrop} pointerEvents="auto">

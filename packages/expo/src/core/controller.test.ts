@@ -61,7 +61,11 @@ describe('createLaunchController', () => {
     expect(navigate).not.toHaveBeenCalled()
 
     controller.setNavigator(navigate)
-    expect(await waitFor(controller, 'done')).toEqual({ status: 'done', path: '/notes' })
+    expect(await waitFor(controller, 'done')).toEqual({
+      status: 'done',
+      source: 'link',
+      path: '/notes',
+    })
     expect(navigate).toHaveBeenCalledWith('/notes')
   })
 
@@ -116,6 +120,7 @@ describe('createLaunchController', () => {
     controller.offer(url('old'))
     expect(await waitFor(controller, 'error')).toEqual({
       status: 'error',
+      source: 'link',
       error: { code: 'expired', message: 'This link has expired.' },
     })
     controller.dismiss()
@@ -136,5 +141,23 @@ describe('createLaunchController', () => {
     unsubscribe()
     controller.dismiss()
     expect(listener).toHaveBeenCalledTimes(calls)
+  })
+
+  it('tags a launch started from the app and reports its stages', async () => {
+    const controller = createLaunchController()
+    controller.configure(deps())
+    controller.setNavigator(vi.fn())
+    const seen: LaunchState[] = []
+    controller.subscribe(() => seen.push(controller.getState()))
+    expect(controller.offer(url('app-tok'), 'app')).toBe(true)
+    expect(await waitFor(controller, 'done')).toEqual({
+      status: 'done',
+      source: 'app',
+      path: '/notes',
+    })
+    expect(
+      seen.filter((s) => s.status === 'launching').map((s) => 'stage' in s && s.stage),
+    ).toEqual([false, 'seeding', 'resetting', 'signing_in', 'opening'])
+    expect(seen.every((s) => s.status === 'idle' || s.source === 'app')).toBe(true)
   })
 })

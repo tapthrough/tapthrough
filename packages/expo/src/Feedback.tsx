@@ -20,32 +20,35 @@ import {
   View,
 } from 'react-native'
 import { Annotator } from './Annotator.js'
-import { Bubble, COLORS } from './Bubble.js'
+import { Bubble, COLORS, screenBounds } from './Bubble.js'
 import type { AnnotationBox } from './core/annotations.js'
+import { defaultPosition, type Point } from './core/bubble.js'
 import { createDiagnostics, installDiagnostics } from './core/diagnostics.js'
 import {
   type Checklist,
   type ChecklistStep,
-  checklistProgress,
   failedStepBody,
   fetchChecklist,
   hasReviewItems,
   type NewerBuild,
   previewContextFromManifest,
-  progressLabel,
   type RecheckItem,
   requestFix,
+  requestLaunch,
   reviewBadge,
-  type StepResultValue,
   sendCause,
   sendFeedback,
   sendRecheck,
   sendStepResult,
   type Triage,
 } from './core/feedback.js'
+import { nextOpenStep, popoverPlacement, type Results, resultsFrom, stepId } from './core/review.js'
+import { useLaunchState } from './hooks.js'
 import { Overlay, useBackPress } from './Overlay.js'
+import { type Direction, type Nav, ReviewPopover, type SetupStatus } from './Popover.js'
 import { controller } from './runtime.js'
 import { captureScreenshot, type Screenshot } from './screenshot.js'
+import { haptics } from './ui/native.js'
 
 /** Remembered for the session, so reviewers type their name once. */
 let rememberedName = ''
@@ -106,6 +109,8 @@ function dismissKeyboard() {
 interface FailingStep {
   scenarioKey: string
   step: ChecklistStep
+  /** The step's position in the scenario, for moving on once the report is sent. */
+  position: number
 }
 
 /** How often a PR preview checks for new results and newer builds while in the foreground. */
@@ -114,23 +119,40 @@ const REFRESH_MS = 30_000
 /** Update groups the reviewer has already been told about, so the toast shows once. */
 const announcedBuilds = new Set<string>()
 
+type Phase = 'idle' | 'loading' | 'open' | 'capturing' | 'composing'
+
 /**
- * A small draggable Review bubble over a PR preview. It opens the PR's
- * checklist (pass or fail each step) or, without a plan, goes straight to
- * reporting an issue with a screenshot of the screen behind it. It keeps the
- * checklist fresh in the background, so it can say when a newer build is out.
+ * A small draggable Review button over a PR preview. Tapping it grows a
+ * popover listing what the PR needs tested; picking a scenario can set the app
+ * up for it and then walks through its steps. Without a plan it goes straight
+ * to reporting an issue with a screenshot of the screen behind it. It keeps
+ * the checklist fresh in the background, so it can say when a newer build is out.
  */
-export function ReportButton({ apiUrl }: { apiUrl: string }) {
+export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: boolean }) {
   const preview = useMemo(() => previewContextFromManifest(Constants.manifest2), [])
   const pathname = usePathname()
-  const [phase, setPhase] = useState<'idle' | 'loading' | 'checklist' | 'capturing' | 'composing'>(
-    'idle',
-  )
+  const { width, height } = useWindowDimensions()
+  const bounds = screenBounds(width, height)
+  const [phase, setPhase] = useState<Phase>('idle')
   const [checklist, setChecklist] = useState<Checklist | null>(null)
+  const [nav, setNav] = useState<Nav>({ view: 'list' })
+  const [direction, setDirection] = useState<Direction>('forward')
+  const [full, setFull] = useState(false)
+  const [overrides, setOverrides] = useState<Results>({})
+  const [rechecked, setRechecked] = useState<Record<string, 'fixed' | 'still_broken'>>({})
+  const [setup, setSetup] = useState<SetupStatus | null>(null)
+  const [anchor, setAnchor] = useState<Point | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [name, setName] = useState(rememberedName)
   const [failing, setFailing] = useState<FailingStep | null>(null)
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null)
   const [toast, setToast] = useState<NewerBuild | null>(null)
+  const launch = useLaunchState()
   const platform = Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : null
+  const results = useMemo(
+    () => ({ ...resultsFrom(checklist), ...overrides }),
+    [checklist, overrides],
+  )
 
   // Only PR previews record diagnostics; regular builds are never hooked.
   useEffect(() => {
@@ -163,7 +185,7 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
     return list
   }
 
-  // Fetch up front so the sheet opens instantly, then poll while the app is in front.
+  // Fetch up front so the popover opens instantly, then poll while the app is in front.
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh reads current props
   useEffect(() => {
     if (!preview || !platform) return
@@ -190,24 +212,174 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
     return () => clearTimeout(timer)
   }, [toast])
 
+  // A setup this popover started: follow the launch through its stages.
+  useEffect(() => {
+    if (!setup || setup.error || setup.progress === 'done') return
+    if (launch.status === 'idle' || launch.source !== 'app') return
+    if (launch.status === 'launching') {
+      if (launch.stage && launch.stage !== setup.progress) {
+        setSetup({ ...setup, progress: launch.stage })
+      }
+      return
+    }
+    controller.dismiss()
+    if (launch.status === 'error') {
+      haptics.warning()
+      setSetup({ ...setup, error: launch.error.message })
+      return
+    }
+    haptics.success()
+    setSetup({ ...setup, progress: 'done' })
+  }, [launch, setup])
+
+  // Once every line is ticked, let it show for a moment, then start the steps.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: begin reads the current checklist
+  useEffect(() => {
+    if (setup?.progress !== 'done' || setup.error) return
+    const key = setup.key
+    const timer = setTimeout(() => {
+      setSetup(null)
+      begin(key)
+      void refresh()
+    }, 700)
+    return () => clearTimeout(timer)
+  }, [setup])
+
   if (!preview || !platform) return null
 
-  async function open() {
+  function go(next: Nav, dir: Direction = 'forward') {
+    setDirection(dir)
+    setNav(next)
+    setError(null)
+  }
+
+  function rememberName() {
+    rememberedName = name.trim()
+  }
+
+  /** Starts a scenario's steps where they're left off, or explores another state. */
+  function begin(key: string) {
+    const scenario = checklist?.scenarios.find((s) => s.key === key)
+    if (!scenario?.steps.length) {
+      go({ view: 'explore', key })
+      return
+    }
+    const index = nextOpenStep(scenario, results)
+    go(index >= 0 ? { view: 'step', key, index } : { view: 'done', key })
+  }
+
+  async function setUp(key: string) {
+    if (!preview || !platform) return
+    haptics.selection()
+    controller.dismiss()
+    go({ view: 'setup', key })
+    setSetup({ key, progress: 'requesting' })
+    const result = await requestLaunch({ preview, platform, scenarioKey: key }, { apiUrl })
+    if (!result.ok) {
+      haptics.warning()
+      setSetup({ key, progress: 'requesting', error: result.message })
+      return
+    }
+    if (!controller.offer(result.launchUrl, 'app')) {
+      setSetup({
+        key,
+        progress: 'requesting',
+        error: 'That setup link was already used. Try again.',
+      })
+    }
+  }
+
+  async function pass(key: string, index: number) {
+    const scenario = checklist?.scenarios.find((s) => s.key === key)
+    const step = scenario?.steps[index]
+    if (!preview || !platform || !scenario || !step) return
+    rememberName()
+    haptics.selection()
+    const id = stepId(key, step.index)
+    const previous = results[id]
+    const after: Results = { ...results, [id]: 'pass' }
+    setOverrides((current) => ({ ...current, [id]: 'pass' }))
+    // Let the green show, then slide in the next step.
+    setTimeout(() => {
+      const next = nextOpenStep(scenario, after, index + 1)
+      go(next >= 0 ? { view: 'step', key, index: next } : { view: 'done', key })
+      if (next < 0) haptics.success()
+    }, 280)
+    const sent = await sendStepResult(
+      {
+        preview,
+        platform,
+        scenarioKey: key,
+        stepIndex: step.index,
+        result: 'pass',
+        ...(rememberedName ? { reporterName: rememberedName } : {}),
+      },
+      { apiUrl },
+    )
+    if (!sent.ok) {
+      setOverrides((current) => ({ ...current, [id]: previous }))
+      setError(sent.message)
+    }
+  }
+
+  function fail(key: string, index: number) {
+    const step = checklist?.scenarios.find((s) => s.key === key)?.steps[index]
+    if (!step) return
+    rememberName()
+    haptics.warning()
+    void startReport({ scenarioKey: key, step, position: index })
+  }
+
+  async function recheck(item: RecheckItem, result: 'fixed' | 'still_broken') {
+    if (!preview || !platform) return
+    rememberName()
+    haptics.selection()
+    setRechecked((current) => ({ ...current, [item.id]: result }))
+    setTimeout(() => go({ view: 'list' }, 'back'), 350)
+    const sent = await sendRecheck(
+      {
+        preview,
+        platform,
+        findingId: item.id,
+        result,
+        ...(rememberedName ? { reporterName: rememberedName } : {}),
+      },
+      { apiUrl },
+    )
+    if (!sent.ok) {
+      setRechecked(({ [item.id]: _, ...rest }) => rest)
+      setError(sent.message)
+    }
+  }
+
+  async function toggle() {
+    if (phase === 'open') {
+      close()
+      return
+    }
     setToast(null)
     const keyboardGone = dismissKeyboard()
+    // A setup that finished or failed while closed shouldn't leave a spinner behind.
+    if (nav.view === 'setup' && !setup) setNav({ view: 'list' })
     if (hasReviewItems(checklist)) {
-      setPhase('checklist')
+      setPhase('open')
       void refresh()
       return
     }
     setPhase('loading')
     const list = await refresh()
     if (hasReviewItems(list)) {
-      setPhase('checklist')
+      setPhase('open')
     } else {
       await keyboardGone
       await startReport(null)
     }
+  }
+
+  function close() {
+    setPhase('idle')
+    setFull(false)
+    setError(null)
   }
 
   /** Hides everything, screenshots the app, then opens the composer. */
@@ -215,57 +387,98 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
     setFailing(step)
     setToast(null)
     setPhase('capturing')
-    await nextFrame()
-    setScreenshot(await captureScreenshot())
-    setPhase('composing')
+    try {
+      await nextFrame()
+      setScreenshot(await captureScreenshot())
+    } finally {
+      // Whatever happens to the screenshot, the reviewer gets the composer.
+      setPhase('composing')
+    }
   }
 
-  function close() {
-    setPhase('idle')
+  /** Back from the composer without sending: to the popover if that's where it started. */
+  function cancelReport() {
     setScreenshot(null)
     setFailing(null)
+    setPhase(hasReviewItems(checklist) ? 'open' : 'idle')
+  }
+
+  /** After a report is sent: a failed step moves the plan on; the next tap carries on there. */
+  function finishReport() {
+    if (failing) {
+      const scenario = checklist?.scenarios.find((s) => s.key === failing.scenarioKey)
+      const id = stepId(failing.scenarioKey, failing.step.index)
+      const after: Results = { ...results, [id]: 'fail' }
+      setOverrides((current) => ({ ...current, [id]: 'fail' }))
+      if (scenario) {
+        const next = nextOpenStep(scenario, after, failing.position + 1)
+        go(
+          next >= 0
+            ? { view: 'step', key: scenario.key, index: next }
+            : { view: 'done', key: scenario.key },
+        )
+      }
+    }
+    setScreenshot(null)
+    setFailing(null)
+    setPhase('idle')
     void refresh()
   }
 
+  const placement = popoverPlacement(anchor ?? defaultPosition(bounds), bounds)
+  const showButton = phase === 'idle' || phase === 'loading' || (phase === 'open' && !full)
+
   return (
     <Overlay>
-      {phase === 'idle' || phase === 'loading' ? (
-        <>
-          {toast ? <NewBuildToast build={toast} onPress={open} /> : null}
-          <Bubble onPress={open} badge={reviewBadge(checklist)} busy={phase === 'loading'} />
-        </>
+      {toast && phase !== 'open' && phase !== 'composing' && phase !== 'capturing' ? (
+        <NewBuildToast build={toast} onPress={toggle} />
       ) : null}
-      {phase === 'checklist' && checklist ? (
-        <ReviewSheet
+      {phase === 'open' && checklist ? (
+        <ReviewPopover
           checklist={checklist}
-          onResult={(scenarioKey, step, result) =>
-            sendStepResult(
-              {
-                preview,
-                platform,
-                scenarioKey,
-                stepIndex: step.index,
-                result,
-                ...(rememberedName ? { reporterName: rememberedName } : {}),
-              },
-              { apiUrl },
-            )
-          }
-          onFail={(scenarioKey, step) => startReport({ scenarioKey, step })}
-          onRecheck={(findingId, result) =>
-            sendRecheck(
-              {
-                preview,
-                platform,
-                findingId,
-                result,
-                ...(rememberedName ? { reporterName: rememberedName } : {}),
-              },
-              { apiUrl },
-            )
-          }
-          onReportOther={() => startReport(null)}
+          results={results}
+          rechecked={rechecked}
+          nav={nav}
+          direction={direction}
+          onNav={(next, dir) => {
+            haptics.selection()
+            go(next, dir)
+          }}
+          placement={placement}
+          bounds={bounds}
+          full={full}
+          onToggleFull={() => {
+            haptics.light()
+            setFull((current) => !current)
+          }}
           onClose={close}
+          canSetUp={canSetUp}
+          setup={setup}
+          onSetUp={setUp}
+          onStart={(key) => {
+            haptics.selection()
+            setSetup(null)
+            begin(key)
+          }}
+          onPass={pass}
+          onFail={fail}
+          onRecheck={recheck}
+          onReportOther={() => void startReport(null)}
+          name={name}
+          onNameChange={(next) => {
+            setName(next)
+            rememberedName = next.trim()
+          }}
+          error={error}
+        />
+      ) : null}
+      {showButton ? (
+        <Bubble
+          onPress={toggle}
+          badge={reviewBadge(checklist)}
+          busy={phase === 'loading'}
+          active={phase === 'open'}
+          onRest={setAnchor}
         />
       ) : null}
       {phase === 'composing' ? (
@@ -320,7 +533,8 @@ export function ReportButton({ apiUrl }: { apiUrl: string }) {
               { apiUrl },
             )
           }
-          onClose={close}
+          onCancel={cancelReport}
+          onClose={finishReport}
         />
       ) : null}
     </Overlay>
@@ -391,261 +605,6 @@ function NewBuildToast({ build, onPress }: { build: NewerBuild; onPress: () => v
   )
 }
 
-/** Above the checklist when the PR has moved on: open the newer build in one tap. */
-function NewerBuildBanner({ build }: { build: NewerBuild }) {
-  return (
-    <View style={styles.newer}>
-      <View style={styles.newerText}>
-        <Text style={styles.newerTitle}>
-          {build.hasFix ? 'Claude pushed a fix' : 'A newer build is ready'}
-        </Text>
-        <Text style={styles.newerMeta}>
-          {`Commit ${build.sha.slice(0, 7)} · this build is out of date`}
-        </Text>
-      </View>
-      {build.openUrl ? (
-        <Pressable
-          onPress={() => Linking.openURL(build.openUrl as string)}
-          style={({ pressed }) => [styles.newerButton, pressed && styles.pressed]}
-          accessibilityRole="link"
-          accessibilityLabel="Open the newer build"
-        >
-          <Text style={styles.newerButtonText}>Open</Text>
-        </Pressable>
-      ) : (
-        <Text style={styles.newerMeta}>Open it from the PR</Text>
-      )}
-    </View>
-  )
-}
-
-/** Who's reviewing: a slim line once known, a field until then. */
-function ReviewerName({ name, onChange }: { name: string; onChange: (name: string) => void }) {
-  const [editing, setEditing] = useState(name.trim() === '')
-  if (!editing) {
-    return (
-      <View style={styles.nameRow}>
-        <Text style={styles.muted}>
-          Reviewing as <Text style={styles.nameStrong}>{name.trim()}</Text>
-        </Text>
-        <Pressable onPress={() => setEditing(true)} accessibilityRole="button" hitSlop={8}>
-          <Text style={styles.linkSmall}>Change</Text>
-        </Pressable>
-      </View>
-    )
-  }
-  return (
-    <TextInput
-      value={name}
-      onChangeText={onChange}
-      onBlur={() => setEditing(name.trim() === '')}
-      placeholder="Your name (shown on the PR)"
-      placeholderTextColor="#8a8f98"
-      autoCapitalize="words"
-      returnKeyType="done"
-      style={[styles.input, styles.inputSlim]}
-      accessibilityLabel="Your name"
-    />
-  )
-}
-
-/** Fail and Pass for one item; the chosen one fills in. */
-function Verdict({
-  value,
-  failLabel,
-  passLabel,
-  subject,
-  onFail,
-  onPass,
-}: {
-  value: 'pass' | 'fail' | undefined
-  failLabel: string
-  passLabel: string
-  subject: string
-  onFail: () => void
-  onPass: () => void
-}) {
-  return (
-    <View style={styles.stepButtons}>
-      <Pressable
-        onPress={onFail}
-        style={[styles.small, styles.smallFail, value === 'fail' && styles.smallFailOn]}
-        accessibilityRole="button"
-        accessibilityState={{ selected: value === 'fail' }}
-        accessibilityLabel={`${failLabel}: ${subject}`}
-        hitSlop={4}
-      >
-        <Text style={[styles.smallFailText, value === 'fail' && styles.smallOnText]}>
-          {failLabel}
-        </Text>
-      </Pressable>
-      <Pressable
-        onPress={onPass}
-        style={[styles.small, styles.smallPass, value === 'pass' && styles.smallPassOn]}
-        accessibilityRole="button"
-        accessibilityState={{ selected: value === 'pass' }}
-        accessibilityLabel={`${passLabel}: ${subject}`}
-        hitSlop={4}
-      >
-        <Text style={[styles.smallPassText, value === 'pass' && styles.smallOnText]}>
-          {value === 'pass' ? `✓ ${passLabel}` : passLabel}
-        </Text>
-      </Pressable>
-    </View>
-  )
-}
-
-/** The PR's test plan: pass or fail each step; failing one files a report about it. */
-function ReviewSheet({
-  checklist,
-  onResult,
-  onFail,
-  onRecheck,
-  onReportOther,
-  onClose,
-}: {
-  checklist: Checklist
-  onResult: (
-    scenarioKey: string,
-    step: ChecklistStep,
-    result: StepResultValue,
-  ) => ReturnType<typeof sendStepResult>
-  onFail: (scenarioKey: string, step: ChecklistStep) => void
-  onRecheck: (findingId: string, result: 'fixed' | 'still_broken') => ReturnType<typeof sendRecheck>
-  onReportOther: () => void
-  onClose: () => void
-}) {
-  const [name, setName] = useState(rememberedName)
-  const [results, setResults] = useState<Record<string, StepResultValue | undefined>>(() =>
-    Object.fromEntries(
-      checklist.scenarios.flatMap((scenario) =>
-        scenario.steps.map((step) => [`${scenario.key}:${step.index}`, step.result?.result]),
-      ),
-    ),
-  )
-  const [error, setError] = useState<string | null>(null)
-  const [rechecked, setRechecked] = useState<Record<string, 'fixed' | 'still_broken'>>({})
-  const progress = checklistProgress(checklist, results)
-
-  async function recheck(item: RecheckItem, result: 'fixed' | 'still_broken') {
-    rememberedName = name.trim()
-    setRechecked((current) => ({ ...current, [item.id]: result }))
-    const response = await onRecheck(item.id, result)
-    if (!response.ok) {
-      setRechecked(({ [item.id]: _, ...rest }) => rest)
-      setError(response.message)
-    }
-  }
-
-  async function pass(scenarioKey: string, step: ChecklistStep) {
-    rememberedName = name.trim()
-    const id = `${scenarioKey}:${step.index}`
-    const previous = results[id]
-    setResults((current) => ({ ...current, [id]: 'pass' }))
-    const result = await onResult(scenarioKey, step, 'pass')
-    if (!result.ok) {
-      setResults((current) => ({ ...current, [id]: previous }))
-      setError(result.message)
-    }
-  }
-
-  function fail(scenarioKey: string, step: ChecklistStep) {
-    rememberedName = name.trim()
-    onFail(scenarioKey, step)
-  }
-
-  return (
-    <Sheet onClose={onClose}>
-      <View style={styles.sheetHead}>
-        <View style={styles.headerRow}>
-          <View>
-            <Text style={styles.title}>PR #{checklist.pr}</Text>
-            {progress.total ? (
-              <Text style={[styles.muted, progress.failed ? styles.error : null]}>
-                {progressLabel(progress)}
-              </Text>
-            ) : null}
-          </View>
-          <Pressable onPress={onClose} accessibilityRole="button" hitSlop={8}>
-            <Text style={styles.link}>Done</Text>
-          </Pressable>
-        </View>
-        {progress.total ? (
-          <View style={styles.bar} accessibilityElementsHidden importantForAccessibility="no">
-            <View
-              style={[styles.barFill, { flex: progress.passed, backgroundColor: COLORS.pass }]}
-            />
-            <View
-              style={[styles.barFill, { flex: progress.failed, backgroundColor: COLORS.fail }]}
-            />
-            <View style={{ flex: progress.total - progress.passed - progress.failed }} />
-          </View>
-        ) : null}
-      </View>
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.form}>
-        {checklist.newerBuild ? <NewerBuildBanner build={checklist.newerBuild} /> : null}
-        <ReviewerName name={name} onChange={setName} />
-        {checklist.recheck?.length ? (
-          <View style={styles.scenario}>
-            <Text style={styles.scenarioTitle}>Re-check earlier reports</Text>
-            {checklist.recheck.map((item) => {
-              const done = rechecked[item.id] ?? (item.stillBrokenHere ? 'still_broken' : undefined)
-              return (
-                <View key={item.id} style={styles.step}>
-                  <Text style={styles.stepAction}>{item.excerpt}</Text>
-                  <Text style={styles.muted}>
-                    {[item.reporter, `reported on ${item.sha.slice(0, 7)}`]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </Text>
-                  <Verdict
-                    value={done === 'fixed' ? 'pass' : done === 'still_broken' ? 'fail' : undefined}
-                    failLabel="Still broken"
-                    passLabel="Fixed"
-                    subject={item.excerpt}
-                    onFail={() => recheck(item, 'still_broken')}
-                    onPass={() => recheck(item, 'fixed')}
-                  />
-                </View>
-              )
-            })}
-          </View>
-        ) : null}
-        {checklist.scenarios.map((scenario) => (
-          <View key={scenario.key} style={styles.scenario}>
-            <Text style={styles.scenarioTitle}>{scenario.title}</Text>
-            {scenario.steps.map((step) => {
-              const current = results[`${scenario.key}:${step.index}`]
-              return (
-                <View key={step.index} style={styles.step}>
-                  <Text style={styles.stepAction}>{step.action}</Text>
-                  <Text style={styles.muted}>Expect: {step.expect}</Text>
-                  <Verdict
-                    value={current === 'skip' ? undefined : current}
-                    failLabel="Fail"
-                    passLabel="Pass"
-                    subject={step.action}
-                    onFail={() => fail(scenario.key, step)}
-                    onPass={() => pass(scenario.key, step)}
-                  />
-                </View>
-              )
-            })}
-          </View>
-        ))}
-        {error ? (
-          <Text style={styles.error} accessibilityRole="alert">
-            {error}
-          </Text>
-        ) : null}
-        <Pressable onPress={onReportOther} accessibilityRole="button" style={styles.other}>
-          <Text style={styles.link}>Report something else</Text>
-        </Pressable>
-      </ScrollView>
-    </Sheet>
-  )
-}
-
 type Status =
   | { kind: 'editing' }
   | { kind: 'sending' }
@@ -660,6 +619,7 @@ function Composer({
   onSend,
   onSetCause,
   onRequestFix,
+  onCancel,
   onClose,
 }: {
   screenshot: Screenshot | null
@@ -675,6 +635,9 @@ function Composer({
   }) => ReturnType<typeof sendFeedback>
   onSetCause: (findingId: string, cause: 'pr' | 'unrelated') => ReturnType<typeof sendCause>
   onRequestFix: (findingId: string) => ReturnType<typeof requestFix>
+  /** Closed without sending. */
+  onCancel: () => void
+  /** Closed after sending. */
   onClose: () => void
 }) {
   const [body, setBody] = useState('')
@@ -713,7 +676,7 @@ function Composer({
 
   return (
     <>
-      <Sheet onClose={onClose}>
+      <Sheet onClose={status.kind === 'sent' ? onClose : onCancel}>
         {status.kind === 'sent' ? (
           <Sent
             pr={pr}
@@ -799,7 +762,7 @@ function Composer({
               </Text>
             ) : null}
             <View style={styles.actions}>
-              <Pressable onPress={onClose} accessibilityRole="button" hitSlop={8}>
+              <Pressable onPress={onCancel} accessibilityRole="button" hitSlop={8}>
                 <Text style={styles.link}>Cancel</Text>
               </Pressable>
               <Pressable

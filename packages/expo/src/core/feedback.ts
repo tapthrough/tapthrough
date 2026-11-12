@@ -172,13 +172,48 @@ export interface NewerBuild {
   hasFix: boolean
 }
 
+/**
+ * One part of getting the app into a scenario's starting state, said two ways:
+ * what Tapthrough does when it sets the app up, and what a person does by hand.
+ */
+export interface SetupLine {
+  kind: 'account' | 'data' | 'flag' | 'screen'
+  /** e.g. "Signs you in as a test user with the viewer role" */
+  auto: string
+  /** e.g. "Sign in as a user with the viewer role" */
+  manual: string
+}
+
+export interface ChecklistScenario {
+  key: string
+  title: string
+  routePath: string
+  /** Why the PR runs it, e.g. "This PR changes src/app/index.tsx". Older servers omit it. */
+  why?: string | null
+  /** How the starting state is made. Older servers omit it. */
+  setup?: SetupLine[]
+  steps: ChecklistStep[]
+}
+
+/** A scenario in the run that isn't part of the PR's plan, for jumping into its state. */
+export interface LibraryEntry {
+  key: string
+  title: string
+  routePath: string
+  /** True for scenarios already in `scenarios`. */
+  picked: boolean
+  why?: string | null
+  setup?: SetupLine[]
+}
+
 export interface Checklist {
   pr: number
   sha: string
   open: boolean
-  scenarios: { key: string; title: string; routePath: string; steps: ChecklistStep[] }[]
+  scenarios: ChecklistScenario[]
   recheck?: RecheckItem[]
   newerBuild?: NewerBuild | null
+  library?: LibraryEntry[]
 }
 
 /** Whether the Review sheet has anything to show. */
@@ -187,6 +222,7 @@ export function hasReviewItems(checklist: Checklist | null): checklist is Checkl
     checklist &&
       (checklist.scenarios.some((s) => s.steps.length > 0) ||
         (checklist.recheck?.length ?? 0) > 0 ||
+        checklist.library?.some((entry) => !entry.picked) ||
         checklist.newerBuild),
   )
 }
@@ -347,6 +383,44 @@ export async function requestFix(
       | { status?: 'requested' | 'not_set_up'; error?: { message?: string } }
       | undefined
     if (response.ok && body?.status) return { ok: true, status: body.status }
+    return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
+  } catch {
+    return { ok: false, message: "Couldn't reach Tapthrough. Check your connection and try again." }
+  }
+}
+
+export type LaunchRequestResult = { ok: true; launchUrl: string } | { ok: false; message: string }
+
+/**
+ * Asks Tapthrough for a launch link into one of the PR's scenarios, so the
+ * app can set itself up for it without leaving. Never throws.
+ */
+export async function requestLaunch(
+  input: { preview: PreviewContext; platform: Platform; scenarioKey: string },
+  options: { apiUrl: string; fetch?: typeof fetch },
+): Promise<LaunchRequestResult> {
+  const doFetch = options.fetch ?? fetch
+  try {
+    const response = await doFetch(`${options.apiUrl.replace(/\/$/, '')}/api/v1/checklist/launch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apiVersion: 1,
+        updateGroupId: input.preview.updateGroupId,
+        projectId: input.preview.projectId,
+        platform: input.platform,
+        scenario: input.scenarioKey,
+      }),
+    })
+    const body = (await response.json().catch(() => undefined)) as
+      | { launchUrl?: string; error?: { message?: string } }
+      | undefined
+    if (response.ok && typeof body?.launchUrl === 'string') {
+      return { ok: true, launchUrl: body.launchUrl }
+    }
+    if (response.status === 404 && !body?.error) {
+      return { ok: false, message: 'This version of Tapthrough can’t set the app up yet.' }
+    }
     return { ok: false, message: body?.error?.message ?? `Tapthrough returned ${response.status}.` }
   } catch {
     return { ok: false, message: "Couldn't reach Tapthrough. Check your connection and try again." }

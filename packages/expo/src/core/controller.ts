@@ -1,12 +1,19 @@
 import { scenarioIdFromToken } from './feedback.js'
-import { type LaunchDeps, type LaunchError, runLaunch } from './launch.js'
+import { type LaunchDeps, type LaunchError, type LaunchStage, runLaunch } from './launch.js'
 import { parseLaunchUrl } from './url.js'
+
+/**
+ * Where a launch came from: a link opened from outside the app, or the
+ * Review popover's Set Up button. The popover shows its own progress for
+ * launches it started, so the full-screen overlay only covers links.
+ */
+export type LaunchSource = 'link' | 'app'
 
 export type LaunchState =
   | { status: 'idle' }
-  | { status: 'launching' }
-  | { status: 'done'; path: string }
-  | { status: 'error'; error: LaunchError }
+  | { status: 'launching'; source: LaunchSource; stage?: LaunchStage }
+  | { status: 'done'; source: LaunchSource; path: string }
+  | { status: 'error'; source: LaunchSource; error: LaunchError }
 
 export type ControllerDeps = Omit<LaunchDeps, 'navigate'>
 type Navigate = LaunchDeps['navigate']
@@ -40,7 +47,7 @@ export function createLaunchController() {
   let state: LaunchState = { status: 'idle' }
   const listeners = new Set<() => void>()
   const seen = new Set<string>()
-  const queue: string[] = []
+  const queue: { token: string; source: LaunchSource }[] = []
   const deps = slot<ControllerDeps>()
   const navigator = slot<Navigate>()
   let running = false
@@ -55,18 +62,20 @@ export function createLaunchController() {
     if (running) return
     running = true
     try {
-      for (let token = queue.shift(); token !== undefined; token = queue.shift()) {
+      for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+        const { token, source } = next
         const current = await deps.get()
-        setState({ status: 'launching' })
+        setState({ status: 'launching', source })
         const result = await runLaunch(token, {
           ...current,
           navigate: async (path) => (await navigator.get())(path),
+          onStage: (stage) => setState({ status: 'launching', source, stage }),
         })
         if (result.ok) lastScenarioId = scenarioIdFromToken(token)
         setState(
           result.ok
-            ? { status: 'done', path: result.path }
-            : { status: 'error', error: result.error },
+            ? { status: 'done', source, path: result.path }
+            : { status: 'error', source, error: result.error },
         )
       }
     } finally {
@@ -76,11 +85,11 @@ export function createLaunchController() {
 
   return {
     /** Queues a launch if `url` carries a token not seen before. Returns whether it did. */
-    offer(url: string | null | undefined): boolean {
+    offer(url: string | null | undefined, source: LaunchSource = 'link'): boolean {
       const token = parseLaunchUrl(url)
       if (!token || seen.has(token)) return false
       seen.add(token)
-      queue.push(token)
+      queue.push({ token, source })
       void drain()
       return true
     },

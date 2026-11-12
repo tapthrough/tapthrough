@@ -1,4 +1,4 @@
-import { type ComponentType, useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import {
   ActivityIndicator,
   Animated,
@@ -8,7 +8,6 @@ import {
   Text,
   useWindowDimensions,
   View,
-  type ViewProps,
 } from 'react-native'
 import {
   type Bounds,
@@ -19,6 +18,8 @@ import {
   snapToEdge,
 } from './core/bubble.js'
 import type { Badge } from './core/feedback.js'
+import { haptics, loadGlass } from './ui/native.js'
+import { Icon } from './ui/parts.js'
 
 /** Where the reviewer last left it, for the rest of the session. */
 let rememberedPosition: Point | null = null
@@ -27,32 +28,8 @@ const IDLE_OPACITY = 0.55
 const IDLE_AFTER_MS = 2500
 const PRESSED_SCALE = 0.9
 
-interface Glass {
-  GlassView: ComponentType<
-    ViewProps & { glassEffectStyle?: 'regular' | 'clear'; tintColor?: string }
-  >
-  isLiquidGlassAvailable(): boolean
-}
-
-declare const require: (id: string) => unknown
-
-let glass: Glass | null | undefined
-
-/** `expo-glass-effect` is optional: with it, iOS 26 gets Liquid Glass like the system's own buttons. */
-function loadGlass(): Glass | null {
-  if (glass === undefined) {
-    try {
-      // Metro treats a require inside try/catch as an optional dependency.
-      const module = require('expo-glass-effect') as Glass
-      glass = module.isLiquidGlassAvailable() ? module : null
-    } catch {
-      glass = null
-    }
-  }
-  return glass
-}
-
-function bounds(width: number, height: number): Bounds {
+/** The screen, less conservative insets for the status bar and home indicator. */
+export function screenBounds(width: number, height: number): Bounds {
   // Conservative insets, so the SDK doesn't need a safe-area dependency.
   return {
     width,
@@ -70,13 +47,19 @@ export function Bubble({
   onPress,
   badge,
   busy,
+  active = false,
+  onRest,
 }: {
   onPress: () => void
   badge: Badge | null
   busy: boolean
+  /** The popover is open: show ✕, stay fully visible and hide the badge. */
+  active?: boolean
+  /** Where the button settles, so the popover can open beside it. */
+  onRest?: (at: Point) => void
 }) {
   const { width, height } = useWindowDimensions()
-  const area = bounds(width, height)
+  const area = screenBounds(width, height)
   const start = rememberedPosition ? snapToEdge(rememberedPosition, area) : defaultPosition(area)
   const position = useRef(new Animated.ValueXY(start)).current
   const opacity = useRef(new Animated.Value(1)).current
@@ -87,9 +70,18 @@ export function Bubble({
     area,
     onPress,
     idle: undefined as ReturnType<typeof setTimeout> | undefined,
+    active,
+    onRest,
   })
   state.current.area = area
   state.current.onPress = onPress
+  state.current.active = active
+  state.current.onRest = onRest
+
+  // Report the starting spot once.
+  useEffect(() => {
+    state.current.onRest?.(state.current.at)
+  }, [])
 
   // Both values drive the same view, so both stay on the JS driver.
   function wake() {
@@ -109,7 +101,7 @@ export function Bubble({
   function sleepSoon() {
     clearTimeout(state.current.idle)
     // Glass is already see-through, and fading it breaks the effect.
-    if (GlassView) return
+    if (GlassView || state.current.active) return
     state.current.idle = setTimeout(() => {
       Animated.timing(opacity, {
         toValue: IDLE_OPACITY,
@@ -119,8 +111,8 @@ export function Bubble({
     }, IDLE_AFTER_MS)
   }
 
-  // Fully visible when something new shows up, then fade again.
-  const badgeKey = badge ? `${badge.kind}:${'count' in badge ? badge.count : ''}` : ''
+  // Fully visible when something new shows up or the popover opens, then fade again.
+  const badgeKey = `${active}:${badge ? `${badge.kind}:${'count' in badge ? badge.count : ''}` : ''}`
   // biome-ignore lint/correctness/useExhaustiveDependencies: wakes on badge changes only
   useEffect(() => {
     wake()
@@ -134,6 +126,7 @@ export function Bubble({
     const next = snapToEdge(state.current.at, area)
     state.current.at = next
     position.setValue(next)
+    state.current.onRest?.(next)
   }, [area.width, area.height])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reads current values through refs
@@ -166,6 +159,8 @@ export function Bubble({
           )
           state.current.at = next
           rememberedPosition = next
+          haptics.light()
+          state.current.onRest?.(next)
           Animated.spring(position, {
             toValue: next,
             useNativeDriver: false,
@@ -193,8 +188,8 @@ export function Bubble({
       ]}
       accessible
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel(badge)}
-      accessibilityHint="Opens the review checklist. Drag to move."
+      accessibilityLabel={active ? 'Close review' : accessibilityLabel(badge)}
+      accessibilityHint={active ? undefined : 'Shows what to test. Drag to move.'}
       accessibilityActions={[{ name: 'activate' }]}
       onAccessibilityAction={() => onPress()}
     >
@@ -206,8 +201,14 @@ export function Bubble({
           pointerEvents="none"
         />
       ) : null}
-      {busy ? <ActivityIndicator color="#ffffff" /> : <Mark />}
-      {badge && !busy ? <BadgeView badge={badge} /> : null}
+      {busy ? (
+        <ActivityIndicator color="#ffffff" />
+      ) : active ? (
+        <Icon name="xmark" size={18} color="#ffffff" />
+      ) : (
+        <Mark />
+      )}
+      {badge && !busy && !active ? <BadgeView badge={badge} /> : null}
     </Animated.View>
   )
 }
@@ -255,7 +256,7 @@ function BadgeView({ badge }: { badge: Badge }) {
       )
     case 'remaining':
       return (
-        <View style={[styles.badge, { backgroundColor: COLORS.accent }]}>
+        <View style={[styles.badge, { backgroundColor: COLORS.count }]}>
           <Text style={styles.badgeText}>{badge.count > 9 ? '9+' : badge.count}</Text>
         </View>
       )
@@ -266,9 +267,10 @@ export const COLORS = {
   ink: '#0e1620',
   tape: '#ecd88e',
   tapeInk: '#2a2414',
-  accent: '#2443f2',
-  pass: '#1d8a4b',
-  fail: '#cf3a2f',
+  /** Steps left: the iOS system blue, the SDK's one tint. */
+  count: '#0A84FF',
+  pass: '#30D158',
+  fail: '#FF453A',
 }
 
 const styles = StyleSheet.create({
@@ -320,9 +322,7 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: COLORS.ink,
   },
   dot: { minWidth: 14, width: 14, height: 14, paddingHorizontal: 0, top: -1, right: -1 },
-  badgeText: { color: '#ffffff', fontSize: 10, fontWeight: '700' },
+  badgeText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
 })
