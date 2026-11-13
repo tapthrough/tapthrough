@@ -292,6 +292,8 @@ export type Badge =
   | { kind: 'failed' }
   | { kind: 'remaining'; count: number }
   | { kind: 'done' }
+  /** Nothing to check here, but an idea waits on someone: questions, or a build to test. */
+  | { kind: 'idea' }
 
 /** What the floating Review button shows: a new build wins, then failures, then steps left. */
 export function reviewBadge(checklist: Checklist | null): Badge | null {

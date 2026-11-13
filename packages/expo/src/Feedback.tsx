@@ -29,7 +29,6 @@ import {
   failedStepBody,
   fetchChecklist,
   fileIssue,
-  hasReviewItems,
   type IssueFix,
   type NewerBuild,
   previewContextFromManifest,
@@ -43,6 +42,18 @@ import {
   sendStepResult,
   type Triage,
 } from './core/feedback.js'
+import {
+  answerIdea,
+  approveMessage,
+  fetchIdeas,
+  fetchOpenPrs,
+  type Idea,
+  type IdeaDraft,
+  ideaAction,
+  ideasNeedingYou,
+  type OpenPr,
+  submitIdea,
+} from './core/ideas.js'
 import { nextOpenStep, popoverPlacement, type Results, resultsFrom, stepId } from './core/review.js'
 import { useLaunchState } from './hooks.js'
 import { Overlay, useBackPress } from './Overlay.js'
@@ -61,6 +72,8 @@ import { SPRING, text, useColors } from './ui/theme.js'
 
 /** Remembered for the session, so reviewers type their name once. */
 let rememberedName = ''
+/** Where idea updates go, if the person gave an email; also kept for the session. */
+let rememberedEmail = ''
 
 const diagnostics = createDiagnostics()
 let diagnosticsInstalled = false
@@ -162,6 +175,10 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
   const [failing, setFailing] = useState<FailingStep | null>(null)
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null)
   const [toast, setToast] = useState<NewerBuild | null>(null)
+  const [ideas, setIdeas] = useState<Idea[]>([])
+  const [ideaBusy, setIdeaBusy] = useState<string | null>(null)
+  const [pulls, setPulls] = useState<OpenPr[] | null>(null)
+  const [composerKind, setComposerKind] = useState<'issue' | 'idea'>('issue')
   const launch = useLaunchState()
   const platform = Platform.OS === 'ios' || Platform.OS === 'android' ? Platform.OS : null
   const results = useMemo(
@@ -190,8 +207,12 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
 
   async function refresh() {
     if (!preview || !platform) return null
-    const list = await fetchChecklist(preview, platform, { apiUrl })
+    const [list, recent] = await Promise.all([
+      fetchChecklist(preview, platform, { apiUrl }),
+      fetchIdeas(preview, platform, { apiUrl }),
+    ])
     if (list) setChecklist(list)
+    setIdeas(recent)
     const newer = list?.newerBuild
     if (newer && !announcedBuilds.has(newer.updateGroupId)) {
       announcedBuilds.add(newer.updateGroupId)
@@ -376,14 +397,15 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
     const keyboardGone = dismissKeyboard()
     // A setup that finished or failed while closed shouldn't leave a spinner behind.
     if (nav.view === 'setup' && !setup) setNav({ view: 'list' })
-    if (hasReviewItems(checklist)) {
+    // With a checklist the popover always opens, so ideas and other PRs are a tap away.
+    if (checklist) {
       setPhase('open')
       void refresh()
       return
     }
     setPhase('loading')
     const list = await refresh()
-    if (hasReviewItems(list)) {
+    if (list) {
       setPhase('open')
     } else {
       await keyboardGone
@@ -398,8 +420,9 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
   }
 
   /** Hides everything, screenshots the app, then opens the composer. */
-  async function startReport(step: FailingStep | null) {
+  async function startReport(step: FailingStep | null, kind: 'issue' | 'idea' = 'issue') {
     setFailing(step)
+    setComposerKind(step ? 'issue' : kind)
     setToast(null)
     setPhase('capturing')
     try {
@@ -415,7 +438,78 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
   function cancelReport() {
     setScreenshot(null)
     setFailing(null)
-    setPhase(hasReviewItems(checklist) ? 'open' : 'idle')
+    setPhase(checklist ? 'open' : 'idle')
+  }
+
+  /** After an idea is sent: straight to it in the popover, where its progress shows. */
+  function viewIdea(idea: Idea) {
+    setIdeas((current) => [idea, ...current.filter((i) => i.id !== idea.id)])
+    setScreenshot(null)
+    setFailing(null)
+    go({ view: 'idea', id: idea.id })
+    setPhase(checklist ? 'open' : 'idle')
+  }
+
+  function replaceIdea(idea: Idea) {
+    setIdeas((current) => current.map((i) => (i.id === idea.id ? idea : i)))
+  }
+
+  async function answer(id: string, answers: string[]) {
+    if (!preview || !platform) return
+    rememberName()
+    setIdeaBusy(id)
+    const result = await answerIdea(
+      { preview, platform, id, answers, ...(rememberedName ? { by: rememberedName } : {}) },
+      { apiUrl },
+    )
+    setIdeaBusy(null)
+    if (!result.ok) {
+      haptics.warning()
+      setError(result.message)
+      return
+    }
+    haptics.success()
+    replaceIdea(result.idea)
+  }
+
+  async function act(id: string, action: 'build' | 'retry' | 'approve') {
+    if (!preview || !platform) return
+    rememberName()
+    haptics.selection()
+    setIdeaBusy(id)
+    const result = await ideaAction(
+      { preview, platform, id, action, ...(rememberedName ? { by: rememberedName } : {}) },
+      { apiUrl },
+    )
+    setIdeaBusy(null)
+    if (!result.ok) {
+      haptics.warning()
+      setError(result.message)
+      return
+    }
+    haptics.success()
+    replaceIdea(
+      action === 'approve' ? { ...result.idea, note: approveMessage(result.approve) } : result.idea,
+    )
+  }
+
+  async function showPulls() {
+    if (!preview || !platform) return
+    setPulls(null)
+    const list = await fetchOpenPrs(preview, platform, { apiUrl })
+    if (list) setPulls(list)
+    else {
+      setPulls([])
+      setError('Couldn’t load the open pull requests. Try again in a moment.')
+    }
+  }
+
+  /** Opens another PR's latest build in this app, the same way a newer build opens. */
+  function switchPr(pr: OpenPr) {
+    if (!pr.openUrl) return
+    haptics.selection()
+    close()
+    Linking.openURL(pr.openUrl)
   }
 
   /** After a report is sent: a failed step moves the plan on; the next tap carries on there. */
@@ -479,6 +573,14 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
           onFail={fail}
           onRecheck={recheck}
           onReportOther={() => void startReport(null)}
+          ideas={ideas}
+          onShareIdea={() => void startReport(null, 'idea')}
+          onAnswerIdea={(id, answers) => void answer(id, answers)}
+          onIdeaAction={(id, action) => void act(id, action)}
+          ideaBusy={ideaBusy}
+          pulls={pulls}
+          onShowPulls={() => void showPulls()}
+          onSwitchPr={switchPr}
           name={name}
           onNameChange={(next) => {
             setName(next)
@@ -490,7 +592,7 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
       {showButton ? (
         <Bubble
           onPress={toggle}
-          badge={reviewBadge(checklist)}
+          badge={reviewBadge(checklist) ?? (ideasNeedingYou(ideas) ? { kind: 'idea' } : null)}
           busy={phase === 'loading'}
           active={phase === 'open'}
           onRest={setAnchor}
@@ -505,6 +607,19 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
           device={deviceLabel()}
           hasScenario={Boolean(controller.lastScenarioId())}
           failedStep={failing?.step ?? null}
+          kind={composerKind}
+          onKindChange={setComposerKind}
+          onSendIdea={(draft) =>
+            submitIdea(
+              {
+                preview,
+                platform,
+                draft: { ...draft, route: pathname, device: deviceInfo() },
+              },
+              { apiUrl },
+            )
+          }
+          onViewIdea={viewIdea}
           onSend={async (input) => {
             const result = await sendFeedback(
               {
@@ -720,6 +835,7 @@ type Status =
       withScreenshot: boolean
     }
   | { kind: 'error'; message: string }
+  | { kind: 'idea_sent'; idea: Idea; emailed: boolean }
 
 function Composer({
   screenshot,
@@ -728,6 +844,10 @@ function Composer({
   device,
   hasScenario,
   failedStep,
+  kind,
+  onKindChange,
+  onSendIdea,
+  onViewIdea,
   onSend,
   onSetCause,
   onRequestFix,
@@ -744,6 +864,11 @@ function Composer({
   hasScenario: boolean
   /** Set when the reviewer failed a step; the note becomes optional. */
   failedStep: ChecklistStep | null
+  /** A bug report goes to the PR; an idea goes to Claude to write up and build. */
+  kind: 'issue' | 'idea'
+  onKindChange: (kind: 'issue' | 'idea') => void
+  onSendIdea: (draft: IdeaDraft) => ReturnType<typeof submitIdea>
+  onViewIdea: (idea: Idea) => void
   onSend: (input: {
     body: string
     reporterName?: string
@@ -762,6 +887,7 @@ function Composer({
   const { width, height } = useWindowDimensions()
   const [body, setBody] = useState('')
   const [name, setName] = useState(rememberedName)
+  const [email, setEmail] = useState(rememberedEmail)
   const [includeScreenshot, setIncludeScreenshot] = useState(screenshot !== null)
   const [annotations, setAnnotations] = useState<AnnotationBox[]>([])
   const [annotating, setAnnotating] = useState(false)
@@ -771,7 +897,30 @@ function Composer({
   const canSend = (failedStep !== null || body.trim() !== '') && !sending
   const withShot = includeScreenshot && screenshot !== null
 
+  const idea = kind === 'idea' && failedStep === null
+
+  async function sendIdea() {
+    rememberedName = name.trim()
+    rememberedEmail = email.trim()
+    setStatus({ kind: 'sending' })
+    const result = await onSendIdea({
+      body: body.trim(),
+      ...(name.trim() ? { authorName: name.trim() } : {}),
+      ...(email.trim() ? { authorEmail: email.trim() } : {}),
+      ...(withShot && screenshot ? { screenshot } : {}),
+    })
+    if (!result.ok) {
+      haptics.warning()
+      setStatus({ kind: 'error', message: result.message })
+      return
+    }
+    haptics.success()
+    Keyboard.dismiss()
+    setStatus({ kind: 'idea_sent', idea: result.idea, emailed: email.trim() !== '' })
+  }
+
   async function send() {
+    if (idea) return sendIdea()
     rememberedName = name.trim()
     setStatus({ kind: 'sending' })
     const result = await onSend({
@@ -811,8 +960,17 @@ function Composer({
 
   return (
     <>
-      <Sheet onClose={status.kind === 'sent' ? onClose : onCancel} scrim={status.kind === 'sent'}>
-        {status.kind === 'sent' ? (
+      <Sheet
+        onClose={status.kind === 'sent' || status.kind === 'idea_sent' ? onClose : onCancel}
+        scrim={status.kind === 'sent' || status.kind === 'idea_sent'}
+      >
+        {status.kind === 'idea_sent' ? (
+          <IdeaSent
+            emailed={status.emailed}
+            onView={() => onViewIdea(status.idea)}
+            onClose={onClose}
+          />
+        ) : status.kind === 'sent' ? (
           <Sent
             pr={pr}
             commentUrl={status.commentUrl}
@@ -834,7 +992,7 @@ function Composer({
         ) : (
           <>
             <SheetHeader
-              title={failedStep ? 'Step Failed' : 'Report an Issue'}
+              title={failedStep ? 'Step Failed' : idea ? 'Share an Idea' : 'Report an Issue'}
               subtitle={pr ? `PR #${pr}` : undefined}
               left={
                 <CircleButton icon="xmark" label="Cancel" onPress={onCancel} disabled={sending} />
@@ -842,7 +1000,7 @@ function Composer({
               right={
                 <CircleButton
                   icon="arrow.up"
-                  label="Send to PR"
+                  label={idea ? 'Send idea to Claude' : 'Send to PR'}
                   tint
                   onPress={send}
                   disabled={!canSend}
@@ -855,6 +1013,17 @@ function Composer({
               style={styles.sheetScroll}
               contentContainerStyle={styles.form}
             >
+              {failedStep ? null : (
+                <Segmented
+                  label="What you're sending"
+                  value={kind}
+                  onChange={onKindChange}
+                  options={[
+                    { value: 'issue', title: 'Something’s Wrong' },
+                    { value: 'idea', title: 'Idea' },
+                  ]}
+                />
+              )}
               {failedStep ? (
                 <View style={styles.quote}>
                   <View style={[styles.quoteMark, { backgroundColor: colors.fail }]}>
@@ -876,7 +1045,9 @@ function Composer({
                 placeholder={
                   failedStep
                     ? 'What happened instead? (optional)'
-                    : 'What’s wrong? What did you expect?'
+                    : idea
+                      ? 'What should the app do? Say what you’d change, and where.'
+                      : 'What’s wrong? What did you expect?'
                 }
                 placeholderTextColor={colors.secondary}
                 multiline
@@ -886,7 +1057,7 @@ function Composer({
                   styles.note,
                   { color: colors.label, backgroundColor: colors.fill },
                 ]}
-                accessibilityLabel="What's wrong"
+                accessibilityLabel={idea ? 'Your idea' : "What's wrong"}
               />
               {status.kind === 'error' ? (
                 <Text
@@ -929,7 +1100,7 @@ function Composer({
                   </Pressable>
                 ) : null}
                 <View style={styles.attachMeta}>
-                  {withShot ? (
+                  {withShot && !idea ? (
                     <Pressable
                       onPress={() => setAnnotating(true)}
                       accessibilityRole="button"
@@ -950,10 +1121,35 @@ function Composer({
               <View style={styles.inset}>
                 <ReviewerName name={name} onChange={setName} colors={colors} />
               </View>
-              <Text style={[text.footnote, styles.inset, { color: colors.secondary }]}>
-                Sending posts this as a comment on {pr ? `PR #${pr}` : 'the PR'}. If it was already
-                broken before this PR, you can file it as a GitHub issue next.
-              </Text>
+              {idea ? (
+                <>
+                  <TextInput
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder="Email for updates (optional)"
+                    placeholderTextColor={colors.secondary}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    style={[
+                      text.subhead,
+                      styles.email,
+                      { color: colors.label, backgroundColor: colors.fill },
+                    ]}
+                    accessibilityLabel="Email for updates"
+                  />
+                  <Text style={[text.footnote, styles.inset, { color: colors.secondary }]}>
+                    Claude reads the code and writes this up as a GitHub issue, asking you first if
+                    it needs to. Then anyone on the team can tap Build It, and you get a build to
+                    test.
+                  </Text>
+                </>
+              ) : (
+                <Text style={[text.footnote, styles.inset, { color: colors.secondary }]}>
+                  Sending posts this as a comment on {pr ? `PR #${pr}` : 'the PR'}. If it was
+                  already broken before this PR, you can file it as a GitHub issue next.
+                </Text>
+              )}
             </ScrollView>
           </>
         )}
@@ -1038,6 +1234,38 @@ function issueStatus(number: number, fix: IssueFix): string {
   if (fix === 'off')
     return `${filed} A developer can add the tapthrough:fix label to have Claude fix it.`
   return `${filed}`
+}
+
+/** After an idea is sent: what happens next, and where to follow it. */
+function IdeaSent({
+  emailed,
+  onView,
+  onClose,
+}: {
+  emailed: boolean
+  onView: () => void
+  onClose: () => void
+}) {
+  const colors = useColors()
+  return (
+    <>
+      <SheetHeader
+        title="Sent to Claude"
+        left={<CircleButton icon="xmark" label="Done" onPress={onClose} />}
+      />
+      <View style={[styles.form, styles.ideaSent]}>
+        <View style={[styles.ideaMark, { backgroundColor: colors.tintFill }]}>
+          <Icon name="lightbulb" size={22} color={colors.tint} />
+        </View>
+        <Text style={[text.subhead, styles.center, { color: colors.label }]}>
+          Claude is reading the code and writing your idea up. If it has questions, they show up
+          under Ideas in the Review panel{emailed ? ', and in your email' : ''}.
+        </Text>
+        <Capsule title="View Idea" onPress={onView} />
+        <Capsule title="Done" kind="plain" onPress={onClose} />
+      </View>
+    </>
+  )
 }
 
 /**
@@ -1259,6 +1487,16 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 12,
     textAlignVertical: 'top',
+  },
+  email: { borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, marginHorizontal: 8 },
+  ideaSent: { alignItems: 'stretch', gap: 12, paddingTop: 8 },
+  ideaMark: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
   },
   attach: { flexDirection: 'row', gap: 14, alignItems: 'flex-start', paddingHorizontal: 8 },
   thumb: {

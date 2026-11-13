@@ -29,6 +29,8 @@ const GLYPHS = {
   'flag.fill': '⚑',
   'arrow.right': '→',
   'arrow.up': '↑',
+  lightbulb: '✦',
+  'arrow.triangle.branch': '⑂',
 } as const
 export type IconName = keyof typeof GLYPHS
 

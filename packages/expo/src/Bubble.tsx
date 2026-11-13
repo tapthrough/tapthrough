@@ -223,6 +223,8 @@ function accessibilityLabel(badge: Badge | null) {
       return `Review this pull request. ${badge.count} step${badge.count === 1 ? '' : 's'} left.`
     case 'done':
       return 'Review this pull request. Every step passed.'
+    case 'idea':
+      return 'Review. An idea needs you.'
     default:
       return 'Review this pull request'
   }
@@ -241,6 +243,7 @@ function Mark() {
 function BadgeView({ badge }: { badge: Badge }) {
   switch (badge.kind) {
     case 'new-build':
+    case 'idea':
       return <View style={[styles.badge, styles.dot, { backgroundColor: COLORS.tape }]} />
     case 'failed':
       return (

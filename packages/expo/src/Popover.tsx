@@ -21,6 +21,7 @@ import type {
   SetupLine,
 } from './core/feedback.js'
 import { resetMessage } from './core/feedback.js'
+import type { Idea, OpenPr } from './core/ideas.js'
 import {
   nextOpenScenario,
   otherStates,
@@ -47,6 +48,9 @@ export type Nav =
   | { view: 'done'; key: string }
   | { view: 'explore'; key: string }
   | { view: 'recheck'; id: string }
+  | { view: 'idea'; id: string }
+  /** The repo's other open PRs, to switch builds. */
+  | { view: 'prs' }
 
 export type Direction = 'forward' | 'back'
 
@@ -78,6 +82,17 @@ export interface ReviewPopoverProps {
   onFail: (key: string, index: number) => void
   onRecheck: (item: RecheckItem, result: 'fixed' | 'still_broken') => void
   onReportOther: () => void
+  /** The app's recent ideas, newest first. */
+  ideas: Idea[]
+  onShareIdea: () => void
+  onAnswerIdea: (id: string, answers: string[]) => void
+  onIdeaAction: (id: string, action: 'build' | 'retry' | 'approve') => void
+  /** The idea whose request is in flight, to show a spinner on its button. */
+  ideaBusy: string | null
+  /** Open PRs with previews; null until loaded. */
+  pulls: OpenPr[] | null
+  onShowPulls: () => void
+  onSwitchPr: (pr: OpenPr) => void
   name: string
   onNameChange: (name: string) => void
   error: string | null
@@ -117,10 +132,10 @@ function entryFor(checklist: Checklist, key: string): Entry | undefined {
 }
 
 const navKey = (nav: Nav) =>
-  nav.view === 'list'
-    ? 'list'
-    : nav.view === 'recheck'
-      ? `recheck:${nav.id}`
+  nav.view === 'list' || nav.view === 'prs'
+    ? nav.view
+    : nav.view === 'recheck' || nav.view === 'idea'
+      ? `${nav.view}:${nav.id}`
       : nav.view === 'step'
         ? `step:${nav.key}:${nav.index}`
         : `${nav.view}:${nav.key}`
@@ -261,6 +276,11 @@ export function ReviewPopover(props: ReviewPopoverProps) {
 function renderView(p: ReviewPopoverProps, colors: Colors): Screen {
   const { nav, checklist } = p
   if (nav.view === 'list') return listView(p, colors)
+  if (nav.view === 'prs') return prsView(p, colors)
+  if (nav.view === 'idea') {
+    const idea = p.ideas.find((i) => i.id === nav.id)
+    return idea ? ideaView(p, idea, colors) : listView(p, colors)
+  }
   if (nav.view === 'recheck') {
     const item = checklist.recheck?.find((r) => r.id === nav.id)
     return item ? recheckView(p, item, colors) : listView(p, colors)
@@ -355,10 +375,248 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
             ))}
           </>
         ) : null}
+        {p.ideas.length ? (
+          <>
+            <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>Ideas</Text>
+            {p.ideas.slice(0, 5).map((idea) => (
+              <Row
+                key={idea.id}
+                colors={colors}
+                lead={
+                  <Badge
+                    icon="lightbulb"
+                    colors={colors}
+                    attention={idea.status === 'needs_answers' || idea.status === 'ready_to_test'}
+                  />
+                }
+                title={ideaTitle(idea)}
+                subtitle={idea.statusLine}
+                onPress={() => p.onNav({ view: 'idea', id: idea.id }, 'forward')}
+              />
+            ))}
+          </>
+        ) : null}
+        <Row
+          colors={colors}
+          lead={<Badge icon="arrow.triangle.branch" colors={colors} />}
+          title="Switch PR"
+          subtitle="Open another pull request’s build"
+          onPress={() => {
+            p.onShowPulls()
+            p.onNav({ view: 'prs' }, 'forward')
+          }}
+        />
         <ReviewerName name={p.name} onChange={p.onNameChange} colors={colors} />
       </>
     ),
-    footer: <Capsule title="Report Something Else" kind="plain" onPress={p.onReportOther} />,
+    footer: (
+      <View style={styles.pair}>
+        <Capsule title="Report Issue" kind="plain" onPress={p.onReportOther} style={styles.half} />
+        <Capsule title="Share Idea" kind="plain" onPress={p.onShareIdea} style={styles.half} />
+      </View>
+    ),
+  }
+}
+
+function ideaTitle(idea: Idea) {
+  if (idea.title) return idea.title
+  const flat = idea.body.replace(/\s+/g, ' ')
+  return flat.length > 60 ? `${flat.slice(0, 59)}…` : flat
+}
+
+function ideaView(p: ReviewPopoverProps, idea: Idea, colors: Colors): Screen {
+  const busy = p.ideaBusy === idea.id
+  const here = idea.prNumber !== null && idea.prNumber === p.checklist.pr
+  const links = [
+    idea.prUrl ? { title: `PR #${idea.prNumber}`, url: idea.prUrl } : null,
+    idea.issueUrl ? { title: `Issue #${idea.issueNumber}`, url: idea.issueUrl } : null,
+  ].filter((l): l is { title: string; url: string } => l !== null)
+  let footer: ReactNode = null
+  if (idea.actions.includes('build')) {
+    footer = (
+      <Capsule title="Build It" busy={busy} onPress={() => p.onIdeaAction(idea.id, 'build')} />
+    )
+  } else if (idea.actions.includes('approve')) {
+    footer = here ? (
+      <Capsule title="Approve" busy={busy} onPress={() => p.onIdeaAction(idea.id, 'approve')} />
+    ) : (
+      <Capsule
+        title="Open Build to Test"
+        onPress={() => {
+          const pr = p.pulls?.find((pull) => pull.number === idea.prNumber)
+          if (pr?.openUrl) p.onSwitchPr(pr)
+          else if (idea.previewUrl) Linking.openURL(idea.previewUrl)
+        }}
+      />
+    )
+  } else if (idea.actions.includes('retry')) {
+    footer = (
+      <Capsule
+        title="Try Again"
+        kind="plain"
+        busy={busy}
+        onPress={() => p.onIdeaAction(idea.id, 'retry')}
+      />
+    )
+  }
+  return {
+    title: ideaTitle(idea),
+    subtitle: idea.statusLine,
+    back: true,
+    body: (
+      <>
+        {idea.summary ? (
+          <Text style={[text.subhead, { color: colors.label }]}>{idea.summary}</Text>
+        ) : (
+          <Text style={[text.subhead, { color: colors.label }]}>“{idea.body}”</Text>
+        )}
+        {idea.note ? (
+          <Text style={[text.footnote, { color: colors.secondary }]}>{idea.note}</Text>
+        ) : null}
+        {idea.status === 'grooming' || idea.status === 'building' ? (
+          <View style={styles.pair}>
+            <ActivityIndicator color={colors.secondary} />
+            <Text style={[text.footnote, styles.rowText, { color: colors.secondary }]}>
+              {idea.status === 'grooming'
+                ? 'Claude is reading the code and writing it up. This takes a minute or two.'
+                : 'Claude is building it. You’ll get a build to test when the PR’s preview is ready.'}
+            </Text>
+          </View>
+        ) : null}
+        {idea.actions.includes('answer') ? (
+          <IdeaAnswers
+            key={idea.id}
+            questions={idea.questions}
+            busy={busy}
+            onSend={(answers) => p.onAnswerIdea(idea.id, answers)}
+            colors={colors}
+          />
+        ) : null}
+        {idea.steps.length && idea.status !== 'needs_answers' ? (
+          <Section title="How to test it" colors={colors}>
+            <Numbered
+              items={idea.steps.map((s) => ({ title: s.action, detail: s.expect }))}
+              colors={colors}
+            />
+          </Section>
+        ) : null}
+        {idea.actions.includes('approve') ? (
+          <Text style={[text.footnote, { color: colors.secondary }]}>
+            {here
+              ? 'You’re on this idea’s build. Try the steps; if it’s right, approve it.'
+              : 'Open its build, try the steps, then approve it from there.'}
+          </Text>
+        ) : null}
+        {links.length ? (
+          <View style={styles.pair}>
+            {links.map((link) => (
+              <Pressable
+                key={link.url}
+                onPress={() => Linking.openURL(link.url)}
+                accessibilityRole="link"
+                hitSlop={8}
+              >
+                <Text style={[text.footnote, styles.rowTitle, { color: colors.tint }]}>
+                  {link.title}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </>
+    ),
+    footer,
+  }
+}
+
+/** One field per question; sending is enabled once every question has an answer. */
+function IdeaAnswers({
+  questions,
+  busy,
+  onSend,
+  colors,
+}: {
+  questions: string[]
+  busy: boolean
+  onSend: (answers: string[]) => void
+  colors: Colors
+}) {
+  const [answers, setAnswers] = useState<string[]>(() => questions.map(() => ''))
+  const ready = answers.every((a) => a.trim() !== '')
+  return (
+    <View style={styles.sectionBlock}>
+      {questions.map((question, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: questions are fixed for the round
+        <View key={i} style={styles.question}>
+          <Text style={[text.subhead, styles.rowTitle, { color: colors.label }]}>{question}</Text>
+          <TextInput
+            value={answers[i]}
+            onChangeText={(value) =>
+              setAnswers((current) => current.map((a, j) => (j === i ? value : a)))
+            }
+            placeholder="Your answer"
+            placeholderTextColor={colors.secondary}
+            multiline
+            style={[
+              text.subhead,
+              styles.nameInput,
+              { color: colors.label, backgroundColor: colors.fill },
+            ]}
+            accessibilityLabel={question}
+          />
+        </View>
+      ))}
+      <Capsule
+        title="Send Answers"
+        busy={busy}
+        disabled={!ready}
+        onPress={() => onSend(answers.map((a) => a.trim()))}
+      />
+    </View>
+  )
+}
+
+function prsView(p: ReviewPopoverProps, colors: Colors): Screen {
+  const { pulls } = p
+  return {
+    title: 'Switch PR',
+    subtitle: pulls ? `${pulls.length} open with a preview` : 'Loading…',
+    back: true,
+    body: !pulls ? (
+      <ActivityIndicator color={colors.secondary} />
+    ) : pulls.length === 0 ? (
+      <Text style={[text.subhead, { color: colors.secondary }]}>
+        No other pull requests have a preview yet.
+      </Text>
+    ) : (
+      pulls.map((pr) => (
+        <Row
+          key={pr.number}
+          colors={colors}
+          lead={
+            pr.current ? (
+              <Mark kind="pass" colors={colors} />
+            ) : (
+              <Badge icon={pr.fromIdea ? 'lightbulb' : 'arrow.triangle.branch'} colors={colors} />
+            )
+          }
+          title={`#${pr.number} ${pr.title}`}
+          subtitle={
+            pr.current
+              ? 'Open now'
+              : pr.needsNewBuild
+                ? 'Changes native code: needs a new build of this app'
+                : [pr.fromIdea ? 'From an idea' : null, pr.author, pr.draft ? 'Draft' : null]
+                    .filter(Boolean)
+                    .join(' · ') || 'Open its build'
+          }
+          onPress={() => {
+            if (pr.current) p.onNav({ view: 'list' }, 'back')
+            else if (pr.openUrl) p.onSwitchPr(pr)
+          }}
+        />
+      ))
+    ),
   }
 }
 
@@ -752,10 +1010,20 @@ function Mark({
   )
 }
 
-function Badge({ icon, colors }: { icon: IconName; colors: Colors }) {
+function Badge({
+  icon,
+  colors,
+  attention = false,
+}: {
+  icon: IconName
+  colors: Colors
+  /** Adds the tape-colored dot: something here waits on you. */
+  attention?: boolean
+}) {
   return (
     <View style={[styles.mark, { backgroundColor: colors.tintFill }]}>
       <Icon name={icon} size={13} color={colors.tint} />
+      {attention ? <View style={styles.attention} /> : null}
     </View>
   )
 }
@@ -964,4 +1232,14 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   nameInput: { borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, marginTop: 6 },
+  question: { gap: 2 },
+  attention: {
+    position: 'absolute',
+    top: -1,
+    right: -1,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#ecd88e',
+  },
 })
