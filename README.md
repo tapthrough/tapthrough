@@ -14,6 +14,7 @@ and the shared protocol. The hosted service lives in a separate, private repo.
 - [Map your screens](docs/scenario-map.md): see which screens have scenarios, and check scenario files
 - [Have your coding agent check a PR](docs/agent-review.md): run the checklist on Expo Simulators and get a clip per step
 - [Reviewing a PR](docs/reviewing.md): for reviewers, including those who don't write code
+- [Ideas from the app](docs/ideas.md): send an idea from the app; Claude writes it up, builds it, and you test it
 
 ## Packages
 

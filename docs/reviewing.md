@@ -34,7 +34,8 @@ button to fill the screen. Tap the Review button again (now an ✕) to close it.
 3. **Pass or Fail each step.** One step at a time. Pass is recorded right away. Fail takes a screenshot of
    the app and lets you say what happened.
 4. **Send.** The report shows the step you were on and what was expected. Tap the screenshot to leave it
-   out, or **Mark Up** to highlight what's wrong or blur personal data. After sending, say whether this PR
+   out, or **Mark Up** to draw on it: circle or point at what's wrong with **Draw**, outline it with
+   **Box**, or hide personal data with **Blur**. After sending, say whether this PR
    caused it or it was **Already broken**; Tapthrough suggests one. A PR bug can go straight to
    **Ask Claude to Fix**; an old one becomes a GitHub issue.
 
@@ -44,8 +45,13 @@ Also in the panel:
   empty account or a viewer role and look around.
 - **Re-check earlier reports.** After a new push, reports from before show up first. Mark them **Fixed** or
   **Still broken**.
-- **Report Something Else.** For anything outside the plan: write what's wrong, and the screenshot comes
+- **Report Issue.** For anything outside the plan: write what's wrong, and the screenshot comes
   along.
+- **Share Idea.** Something the app should do? Claude writes it up as an issue, and can build it into a
+  PR for you to test. See [Ideas from the app](ideas.md).
+- **Switch PR.** Lists the app's other open pull requests with previews. Tap one to open its build right
+  here, without going back to GitHub. PRs that change native code say so: they need a new build of the
+  preview app.
 - **Get new builds.** When someone pushes to the PR, or Claude pushes a fix, a short notice appears at the
   top and the Review button gets a yellow dot. Tap **View**, or **Open** in the panel, to switch to the new
   build, then re-check.

@@ -105,3 +105,8 @@ stays open until a reviewer re-checks it on the new build.
 | `max-turns` | `40` | Upper bound on the agent's turns |
 | `claude-code-version` | pinned | The Claude Code CLI version to install |
 | `api-url` | `https://tapthrough.dev` | Tapthrough's URL |
+
+## Ideas use the same workflow
+
+The same workflow also writes up and builds [ideas sent from the app](ideas.md). Writing an idea up is
+read-only; building it pushes to `tapthrough/idea-<issue>` and Tapthrough opens the PR.
