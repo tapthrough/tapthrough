@@ -15,7 +15,7 @@ describe('config plugin', () => {
     const config = withTapthrough(base, { seedHookUrl })
     expect(config.extra).toEqual({
       eas: { projectId: 'p' },
-      tapthrough: { enabled: true, seedHookUrl, apiUrl: 'https://tapthrough.dev' },
+      tapthrough: { enabled: true, seedHookUrl, apiUrl: 'https://tapthrough-cloud.vercel.app' },
     })
   })
 
@@ -45,7 +45,7 @@ describe('config plugin', () => {
     expect(config.extra?.tapthrough).toEqual({
       enabled: false,
       seedHookUrl: undefined,
-      apiUrl: 'https://tapthrough.dev',
+      apiUrl: 'https://tapthrough-cloud.vercel.app',
       staff: true,
       appKey,
     })

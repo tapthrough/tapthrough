@@ -30,7 +30,7 @@ describe('pluginConfig', () => {
     expect(pluginConfig()).toEqual({
       enabled: false,
       seedHookUrl: undefined,
-      apiUrl: 'https://tapthrough.dev',
+      apiUrl: 'https://tapthrough-cloud.vercel.app',
       staff: false,
       appKey: undefined,
     })

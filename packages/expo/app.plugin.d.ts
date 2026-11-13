@@ -3,7 +3,7 @@ export interface TapthroughPluginProps {
   enabled?: boolean
   /** Your seed hook, e.g. `https://<ref>.supabase.co/functions/v1/tapthrough-seed`. */
   seedHookUrl?: string
-  /** Tapthrough's base URL, where in-app reports go. Defaults to `https://tapthrough.dev`. */
+  /** Tapthrough's base URL, where in-app reports go. Defaults to `https://tapthrough-cloud.vercel.app`. */
   apiUrl?: string
   /**
    * Staging and TestFlight builds: shows a feedback button outside PR previews,

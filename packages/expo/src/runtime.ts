@@ -4,7 +4,7 @@ import { createLaunchController } from './core/controller.js'
 /** One controller per app, shared by `<Tapthrough>` and `redirectSystemPath`. */
 export const controller = createLaunchController()
 
-export const DEFAULT_API_URL = 'https://tapthrough.dev'
+export const DEFAULT_API_URL = 'https://tapthrough-cloud.vercel.app'
 
 export interface PluginConfig {
   enabled: boolean

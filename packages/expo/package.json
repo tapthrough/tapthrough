@@ -1,6 +1,6 @@
 {
   "name": "@tapthrough/expo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tapthrough SDK for Expo: opens a pull request preview on the right screen, logged in with seeded data",
   "license": "MIT",
   "repository": {

@@ -20159,7 +20159,7 @@ function buildManifest(workingDir, baseSha, headSha) {
 }
 async function main() {
   const workingDir = path2.resolve(input2("working-directory") || ".");
-  const apiUrl = (input2("api-url") || "https://tapthrough.dev").replace(/\/$/, "");
+  const apiUrl = (input2("api-url") || "https://tapthrough-cloud.vercel.app").replace(/\/$/, "");
   const updateJson = input2("update-json");
   if (!updateJson) throw new Error("Set `update-json` to the file `eas update --json` wrote.");
   const updates = parseEasUpdateJson(readFileSync(path2.resolve(workingDir, updateJson), "utf8"));

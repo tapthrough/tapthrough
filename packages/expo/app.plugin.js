@@ -21,7 +21,7 @@ function withTapthrough(config, props = {}) {
   const enabled = props.enabled ?? true
   const staff = props.staff === true
   const seedHookUrl = props.seedHookUrl
-  const apiUrl = props.apiUrl ?? 'https://tapthrough.dev'
+  const apiUrl = props.apiUrl ?? 'https://tapthrough-cloud.vercel.app'
 
   if (enabled || staff) {
     if (!isAllowedUrl(apiUrl)) {

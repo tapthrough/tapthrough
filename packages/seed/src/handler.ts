@@ -15,7 +15,7 @@ import type { Presets, SeedContext, SeedResult } from './presets.js'
 
 type JWTVerifyGetKey = VerifyLinkTokenOptions['keys']
 
-export const DEFAULT_ISSUER = 'https://tapthrough.dev'
+export const DEFAULT_ISSUER = 'https://tapthrough-cloud.vercel.app'
 
 /** Environments the handler will seed in. Anything else, including unset, is refused. */
 export const SEEDABLE_ENVIRONMENTS = ['staging', 'development'] as const

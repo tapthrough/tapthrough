@@ -11,7 +11,7 @@ inputs:
     required: true
   api-url:
     description: Tapthrough's base URL; also the audience of the GitHub OIDC token
-    default: https://tapthrough.dev
+    default: https://tapthrough-cloud.vercel.app
   working-directory:
     description: The Expo app's directory
     default: .

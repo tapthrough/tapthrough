@@ -97,7 +97,7 @@ Deno.serve(
 ```
 
 ```sh
-supabase secrets set TAPTHROUGH_ENV=staging TAPTHROUGH_ISSUER=https://tapthrough.dev
+supabase secrets set TAPTHROUGH_ENV=staging TAPTHROUGH_ISSUER=https://tapthrough-cloud.vercel.app
 supabase functions deploy tapthrough-seed --no-verify-jwt
 ```
 
@@ -148,7 +148,7 @@ Set `TAPTHROUGH_ENV` and `TAPTHROUGH_ISSUER` as EAS environment variables, then 
 | `environment` | Yes | Must be `staging` or `development`. Unset or anything else returns `403 not_staging`. |
 | `presets` | Yes | Your presets, by name. |
 | `sharedAccount` | No | `(context) => Promise<{ session }>` for tier 0 scenarios, which log in to a shared account instead of seeding. |
-| `issuer` | No | Tapthrough's base URL. Defaults to `https://tapthrough.dev`. |
+| `issuer` | No | Tapthrough's base URL. Defaults to `https://tapthrough-cloud.vercel.app`. |
 
 ## Errors
 
