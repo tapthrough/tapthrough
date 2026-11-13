@@ -16,6 +16,14 @@ const PROTECTED = [
   /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/,
 ]
 
+/** A build adds a scenario for its screen, so testers land on it; nothing else in `.tapthrough/`. */
+const BUILD_ALLOWED = [/^\.tapthrough\/scenarios\/[\w-]+\.json$/]
+
+function isProtected(file, mode) {
+  if (mode === 'build' && BUILD_ALLOWED.some((pattern) => pattern.test(file))) return false
+  return PROTECTED.some((pattern) => pattern.test(file))
+}
+
 function output(name, value) {
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`)
 }
@@ -59,7 +67,8 @@ async function claim() {
   if (!fixRequestId) throw new Error('This workflow runs from Tapthrough’s repository_dispatch.')
   mkdirSync(workdir, { recursive: true })
   const task = await api('/api/v1/fix/claim', { apiVersion: 1, fixRequestId, workdir })
-  console.log(`::add-mask::${task.pushToken}`)
+  // Grooming gets no token at all.
+  if (task.pushToken) console.log(`::add-mask::${task.pushToken}`)
   const { pushToken, ...rest } = task
   writeFileSync(taskFile, JSON.stringify({ ...rest, fixRequestId }, null, 2))
   output('claimed', 'true')
@@ -67,17 +76,18 @@ async function claim() {
   // An issue fix starts from the default branch and pushes a branch of its own.
   output('checkout-ref', task.checkoutRef ?? task.headRef)
   output('push-token', pushToken)
-  console.log(
-    task.mode === 'issue'
-      ? `Fixing issue #${task.issue} from ${task.checkoutRef}, onto ${task.headRef}.`
-      : `Fixing a report on PR #${task.pr} (branch ${task.headRef}).`,
-  )
+  const what = {
+    issue: `Fixing issue #${task.issue} from ${task.checkoutRef}, onto ${task.headRef}.`,
+    groom: `Writing up an idea from the app against ${task.checkoutRef}.`,
+    build: `Building idea #${task.issue} from ${task.checkoutRef}, onto ${task.headRef}.`,
+  }
+  console.log(what[task.mode] ?? `Fixing a report on PR #${task.pr} (branch ${task.headRef}).`)
 }
 
 async function prepare() {
   const task = JSON.parse(readFileSync(taskFile, 'utf8'))
-  // An issue fix has no PR, so no diff to blame.
-  if (task.mode !== 'issue') {
+  // Only a PR fix has a diff to blame; issues and ideas start from the default branch.
+  if (task.mode === 'pr' || task.mode === undefined) {
     // fetch-depth: 0 already has the base branch; fetch it again only if it's missing.
     try {
       git('rev-parse', '--verify', `origin/${task.baseRef}`)
@@ -96,19 +106,28 @@ async function prepare() {
 
 function agent() {
   const task = JSON.parse(readFileSync(taskFile, 'utf8'))
+  // Grooming reads the code and writes only its verdict; nothing it changes is pushed.
+  const groom = task.mode === 'groom'
+  const turns =
+    (groom && process.env.CLAUDE_GROOM_MAX_TURNS) ||
+    (task.mode === 'build' && process.env.CLAUDE_BUILD_MAX_TURNS) ||
+    process.env.CLAUDE_MAX_TURNS ||
+    '40'
   const args = [
     '-p',
     task.prompt,
     '--allowedTools',
-    'Read,Edit,MultiEdit,Write,Glob,Grep',
+    groom ? 'Read,Glob,Grep,Write' : 'Read,Edit,MultiEdit,Write,Glob,Grep',
     '--disallowedTools',
-    'Bash,WebFetch,WebSearch,NotebookEdit',
+    groom
+      ? 'Bash,WebFetch,WebSearch,NotebookEdit,Edit,MultiEdit'
+      : 'Bash,WebFetch,WebSearch,NotebookEdit',
     '--permission-mode',
     'acceptEdits',
     '--add-dir',
     workdir,
     '--max-turns',
-    process.env.CLAUDE_MAX_TURNS || '40',
+    turns,
     '--output-format',
     'json',
   ]
@@ -150,14 +169,39 @@ function readVerdict(file) {
   }
 }
 
+/** A groom job's spec, passed on as is; Tapthrough checks its shape. */
+function readGroomVerdict(file) {
+  if (!existsSync(file)) return undefined
+  try {
+    const v = JSON.parse(readFileSync(file, 'utf8'))
+    if (v.outcome !== 'groomed') {
+      return { outcome: 'declined', summary: String(v.summary ?? '').slice(0, 1000) }
+    }
+    return {
+      outcome: 'groomed',
+      summary: String(v.summary ?? '').slice(0, 1000),
+      idea: {
+        title: v.title,
+        summary: v.summary,
+        spec: v.spec,
+        questions: v.questions,
+        steps: v.steps,
+        size: v.size,
+      },
+    }
+  } catch {
+    return undefined
+  }
+}
+
 /** Undoes anything the agent changed under protected paths. */
-function restoreProtected() {
+function restoreProtected(mode) {
   const changed = git('status', '--porcelain', '--untracked-files=all')
     .split('\n')
     .filter(Boolean)
     .map((line) => ({ code: line.slice(0, 2), file: line.slice(3).replace(/^.* -> /, '') }))
   for (const { code, file } of changed) {
-    if (!PROTECTED.some((pattern) => pattern.test(file))) continue
+    if (!isProtected(file, mode)) continue
     console.log(`Reverting a change to protected path ${file}`)
     if (code === '??') rmSync(file, { force: true })
     else git('checkout', 'HEAD', '--', file)
@@ -174,8 +218,14 @@ async function finish() {
     await report({ outcome: 'failed', summary: 'The agent step failed; see the run.' })
     return
   }
+  if (task.mode === 'groom') {
+    const groomed = readGroomVerdict(task.paths.verdict)
+    await report(groomed ?? { outcome: 'failed', summary: 'Claude wrote no spec.' })
+    console.log(groomed?.outcome === 'groomed' ? 'Sent the spec to Tapthrough.' : 'No spec.')
+    return
+  }
   const verdict = readVerdict(task.paths.verdict)
-  restoreProtected()
+  restoreProtected(task.mode)
   const dirty = git('status', '--porcelain', '--untracked-files=all') !== ''
 
   if (!dirty || verdict?.outcome !== 'fixed') {
@@ -187,7 +237,10 @@ async function finish() {
     return
   }
 
-  const subject = (verdict.summary.split(/(?<=\.)\s/)[0] || 'Fix a reported issue').slice(0, 68)
+  const build = task.mode === 'build'
+  const subject = (
+    verdict.summary.split(/(?<=\.)\s/)[0] || (build ? 'Build an idea' : 'Fix a reported issue')
+  ).slice(0, 68)
   git('add', '--all')
   execFileSync(
     'git',
@@ -199,12 +252,14 @@ async function finish() {
       'commit',
       '--quiet',
       '-m',
-      `Fix: ${subject}`,
+      `${build ? 'Build' : 'Fix'}: ${subject}`,
       '-m',
       `${verdict.summary}\n\n${
-        task.mode === 'issue'
-          ? `Requested on issue #${task.issue} through Tapthrough.`
-          : `Reported by a reviewer on PR #${task.pr} through Tapthrough.`
+        build
+          ? `Built from idea #${task.issue}, sent from the app through Tapthrough.`
+          : task.mode === 'issue'
+            ? `Requested on issue #${task.issue} through Tapthrough.`
+            : `Reported by a reviewer on PR #${task.pr} through Tapthrough.`
       }\n\nCo-Authored-By: Claude <noreply@anthropic.com>`,
     ],
     { stdio: 'inherit' },
@@ -218,8 +273,8 @@ async function finish() {
       '-c',
       `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}`,
       'push',
-      // The issue's branch is Tapthrough's own, so a retry replaces it.
-      ...(task.mode === 'issue' ? ['--force'] : []),
+      // Issue and idea branches are Tapthrough's own, so a retry replaces them.
+      ...(task.mode === 'issue' || build ? ['--force'] : []),
       'origin',
       `HEAD:refs/heads/${task.headRef}`,
     ],
@@ -227,7 +282,7 @@ async function finish() {
   )
   await report({
     outcome: 'fixed',
-    ...(task.mode === 'issue' ? {} : { fromThisPr: verdict.fromThisPr ?? true }),
+    ...(task.mode === 'issue' || build ? {} : { fromThisPr: verdict.fromThisPr ?? true }),
     summary: verdict.summary,
     commitSha,
   })

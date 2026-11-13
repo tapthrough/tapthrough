@@ -1,5 +1,5 @@
 name: Tapthrough Fix
-description: Lets Claude fix a bug reported from a Tapthrough preview, on the PR or from a labeled issue
+description: Lets Claude fix a bug reported from a Tapthrough preview, or write up and build an idea sent from the app
 author: Tapthrough
 branding:
   icon: tool
@@ -19,8 +19,14 @@ inputs:
     description: Version of the Claude Code CLI to install
     default: 2.1.304
   max-turns:
-    description: Upper bound on the agent's turns, to cap cost
+    description: Upper bound on the agent's turns for a fix, to cap cost
     default: '40'
+  groom-max-turns:
+    description: Upper bound on turns when writing up an idea from the app (read-only)
+    default: '25'
+  build-max-turns:
+    description: Upper bound on turns when building an idea from the app
+    default: '80'
 
 runs:
   using: composite
@@ -59,6 +65,8 @@ runs:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         CLAUDE_MODEL: ${{ inputs.model }}
         CLAUDE_MAX_TURNS: ${{ inputs.max-turns }}
+        CLAUDE_GROOM_MAX_TURNS: ${{ inputs.groom-max-turns }}
+        CLAUDE_BUILD_MAX_TURNS: ${{ inputs.build-max-turns }}
       run: node "$GITHUB_ACTION_PATH/fix.mjs" agent
 
     - name: Push the fix and report back
