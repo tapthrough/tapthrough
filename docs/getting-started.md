@@ -9,8 +9,7 @@ This guide takes about 30 minutes for a typical Expo Router app. Or hand it to y
 `Read https://raw.githubusercontent.com/tapthrough/tapthrough/main/docs/onboard-with-your-agent.md and follow
 it step by step` into Claude Code, Cursor or Codex. See [set up with your coding agent](onboard-with-your-agent.md).
 
-> **Early access.** The Action runs from `tapthrough/tapthrough@main` until `v1` is tagged, and the SDK
-> packages are installed from tarballs we send you until they're on npm.
+> **Early access.** The Action runs from `tapthrough/tapthrough@main` until `v1` is tagged.
 
 ## What you need
 
@@ -26,10 +25,10 @@ Install **TapThrough** on your repo: <https://github.com/apps/tapthrough/install
 
 | Permission | Why |
 | --- | --- |
-| Contents: read | To read your PR's test plan (`.tapthrough/plans/<pr>.json`) |
+| Contents: read and write | To read your test plans and `.tapthrough/` settings. Write is only used to start your own workflows (`repository_dispatch`) when someone asks Claude to fix a report. Tapthrough never pushes code. |
 | Pull requests: read and write | To post and update the Tapthrough comment |
-| Issues: read | For linked tickets (coming) |
-| Checks: read and write | For the review check run (coming) |
+| Issues: read and write | To file reports as issues when a reviewer asks |
+| Checks: read and write | For the review check run |
 
 ## 2. Add the SDK
 
@@ -48,11 +47,15 @@ Then:
    plugins: [
      ['@tapthrough/expo', {
        enabled: process.env.APP_VARIANT !== 'production',
-       seedHookUrl: 'https://<your-staging>/functions/v1/tapthrough-seed',
        apiUrl: 'https://tapthrough-cloud.vercel.app',
+       // Add later, for test data (step 5):
+       // seedHookUrl: 'https://<your-staging>/functions/v1/tapthrough-seed',
      }],
    ],
    ```
+
+   If your app is already in the App Store, make sure store builds set `APP_VARIANT=production`, or
+   follow [apps already in the store](https://tapthrough-cloud.vercel.app/docs/existing-app) instead.
 
 2. **Wrap your root layout:**
 
@@ -69,7 +72,9 @@ Then:
    }
    ```
 
-   `auth` signs the app in with the session your seed hook returns. `reset` clears local state first.
+   No login in your app yet? Leave out `auth` and `reset`: `<Tapthrough><Stack /></Tapthrough>`.
+   Otherwise `auth` signs the app in with the session your seed hook returns, and `reset` clears local
+   state first.
    See the [SDK README](../packages/expo/README.md) for Supabase, React Query, AsyncStorage and Zustand
    helpers.
 

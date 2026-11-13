@@ -11,8 +11,11 @@ import { controller, pluginConfig } from './runtime.js'
 
 export interface TapthroughProps {
   children: ReactNode
-  /** How to log in with the seeded session, e.g. `supabaseAuth(supabase)`. */
-  auth: AuthAdapter
+  /**
+   * How to log in with the seeded session, e.g. `supabaseAuth(supabase)`.
+   * Leave it out if the app has no login.
+   */
+  auth?: AuthAdapter
   /** Local state to clear before logging in: query caches, persisted keys, stores. */
   reset?: ResetTarget[]
   /** Overrides the config plugin's `seedHookUrl`. */
@@ -25,6 +28,9 @@ export interface TapthroughProps {
   apiUrl?: string
 }
 
+/** For apps without login: the seeded session is ignored. */
+const noAuth: AuthAdapter = { signIn: async () => {} }
+
 /**
  * Wrap your root layout's content with it. When the app opens from a
  * Tapthrough link, it seeds the test user, logs in, applies flags and opens
@@ -32,7 +38,7 @@ export interface TapthroughProps {
  */
 export function Tapthrough({
   children,
-  auth,
+  auth = noAuth,
   reset,
   seedHookUrl,
   enabled,

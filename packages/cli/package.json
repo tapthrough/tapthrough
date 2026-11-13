@@ -1,6 +1,6 @@
 {
   "name": "@tapthrough/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Tapthrough CLI: maps an Expo Router app's screens to scenarios and checks scenario files",
   "license": "MIT",
   "repository": {
