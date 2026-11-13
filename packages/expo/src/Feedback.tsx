@@ -20,7 +20,7 @@ import {
 } from 'react-native'
 import { Annotator } from './Annotator.js'
 import { Bubble, COLORS, screenBounds } from './Bubble.js'
-import type { AnnotationBox } from './core/annotations.js'
+import type { Annotation } from './core/annotations.js'
 import { defaultPosition, type Point } from './core/bubble.js'
 import { createDiagnostics, installDiagnostics } from './core/diagnostics.js'
 import {
@@ -873,7 +873,7 @@ function Composer({
     body: string
     reporterName?: string
     screenshot?: Screenshot
-    annotations?: AnnotationBox[]
+    annotations?: Annotation[]
   }) => ReturnType<typeof sendFeedback>
   onSetCause: (findingId: string, cause: 'pr' | 'unrelated') => ReturnType<typeof sendCause>
   onRequestFix: (findingId: string) => ReturnType<typeof requestFix>
@@ -889,7 +889,7 @@ function Composer({
   const [name, setName] = useState(rememberedName)
   const [email, setEmail] = useState(rememberedEmail)
   const [includeScreenshot, setIncludeScreenshot] = useState(screenshot !== null)
-  const [annotations, setAnnotations] = useState<AnnotationBox[]>([])
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [annotating, setAnnotating] = useState(false)
   const [status, setStatus] = useState<Status>({ kind: 'editing' })
   const pr = branch?.match(/^pr-(\d+)$/)?.[1]

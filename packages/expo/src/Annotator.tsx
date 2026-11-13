@@ -9,14 +9,30 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native'
-import { type AnnotationBox, boxFromDrag, MAX_ANNOTATIONS } from './core/annotations.js'
+import {
+  type Annotation,
+  type AnnotationStroke,
+  addStrokePoint,
+  boxFromDrag,
+  finishStroke,
+  MAX_ANNOTATIONS,
+  strokeSegments,
+} from './core/annotations.js'
 import { useBackPress } from './Overlay.js'
 import type { Screenshot } from './screenshot.js'
 
+type Mode = 'draw' | 'highlight' | 'blur'
+
+const MODES: { mode: Mode; title: string; hint: string }[] = [
+  { mode: 'draw', title: 'Draw', hint: 'Draw on the screenshot to circle or point at something.' },
+  { mode: 'highlight', title: 'Box', hint: 'Drag on the screenshot to draw a box.' },
+  { mode: 'blur', title: 'Blur', hint: 'Drag over anything private to blur it.' },
+]
+
 /**
- * Full-screen markup for a report's screenshot: drag to draw a box, Highlight
- * to point at something, Blur to hide personal data. The server applies the
- * boxes before storing the image.
+ * Full-screen markup for a report's screenshot: Draw to circle or point at
+ * something freehand, Box to outline it, Blur to hide personal data. The
+ * server applies the marks before storing the image.
  */
 export function Annotator({
   screenshot,
@@ -25,14 +41,14 @@ export function Annotator({
   onCancel,
 }: {
   screenshot: Screenshot
-  initial: AnnotationBox[]
-  onDone: (boxes: AnnotationBox[]) => void
+  initial: Annotation[]
+  onDone: (marks: Annotation[]) => void
   onCancel: () => void
 }) {
   const window = useWindowDimensions()
   const [boxes, setBoxes] = useState(initial)
-  const [kind, setKind] = useState<AnnotationBox['kind']>('highlight')
-  const [draft, setDraft] = useState<AnnotationBox | null>(null)
+  const [kind, setKind] = useState<Mode>('draw')
+  const [draft, setDraft] = useState<Annotation | null>(null)
   const [aspect, setAspect] = useState(window.width / window.height)
   const uri = `data:${screenshot.contentType};base64,${screenshot.base64}`
   const shown = useRef(new Animated.Value(0)).current
@@ -47,7 +63,13 @@ export function Annotator({
   const width = Math.min(maxWidth, maxHeight * aspect)
   const height = width / aspect
 
-  const state = useRef({ start: { x: 0, y: 0 }, draft: null as AnnotationBox | null, kind, boxes })
+  const state = useRef({
+    start: { x: 0, y: 0 },
+    draft: null as Annotation | null,
+    points: [] as [number, number][],
+    kind,
+    boxes,
+  })
   state.current.kind = kind
   state.current.boxes = boxes
 
@@ -57,22 +79,31 @@ export function Annotator({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderGrant: (event) => {
-          state.current.start = { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY }
+          const start = { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY }
+          state.current.start = start
           state.current.draft = null
+          state.current.points =
+            state.current.kind === 'draw' ? addStrokePoint([], start, { width, height }) : []
         },
         onPanResponderMove: (_event, gesture) => {
-          const { start } = state.current
-          const next = boxFromDrag(
-            state.current.kind,
-            start,
-            { x: start.x + gesture.dx, y: start.y + gesture.dy },
-            { width, height },
-          )
+          const { start, kind: mode } = state.current
+          const at = { x: start.x + gesture.dx, y: start.y + gesture.dy }
+          if (mode === 'draw') {
+            const points = addStrokePoint(state.current.points, at, { width, height })
+            if (points === state.current.points) return
+            state.current.points = points
+            const stroke: AnnotationStroke = { kind: 'draw', points }
+            state.current.draft = stroke
+            setDraft(stroke)
+            return
+          }
+          const next = boxFromDrag(mode, start, at, { width, height })
           state.current.draft = next
           setDraft(next)
         },
         onPanResponderRelease: () => {
-          const finished = state.current.draft
+          const { draft: current } = state.current
+          const finished = current?.kind === 'draw' ? finishStroke(current.points) : current
           if (finished && state.current.boxes.length < MAX_ANNOTATIONS) {
             setBoxes([...state.current.boxes, finished])
           }
@@ -91,7 +122,7 @@ export function Annotator({
             <Text style={styles.toolbarText}>Cancel</Text>
           </Pressable>
           <View style={styles.modes}>
-            {(['highlight', 'blur'] as const).map((mode) => (
+            {MODES.map(({ mode, title }) => (
               <Pressable
                 key={mode}
                 onPress={() => setKind(mode)}
@@ -100,7 +131,7 @@ export function Annotator({
                 accessibilityState={{ selected: kind === mode }}
               >
                 <Text style={[styles.modeText, kind === mode && styles.modeTextActive]}>
-                  {mode === 'highlight' ? 'Highlight' : 'Blur'}
+                  {title}
                 </Text>
               </Pressable>
             ))}
@@ -120,32 +151,39 @@ export function Annotator({
             }}
             accessibilityLabel="Screenshot to mark up"
           />
-          {[...boxes, ...(draft ? [draft] : [])].map((box, index) => (
-            <View
-              // biome-ignore lint/suspicious/noArrayIndexKey: boxes have no identity beyond their order
-              key={index}
-              pointerEvents="none"
-              style={[
-                styles.box,
-                box.kind === 'blur' ? styles.blurBox : styles.highlightBox,
-                {
-                  left: box.x * width,
-                  top: box.y * height,
-                  width: box.w * width,
-                  height: box.h * height,
-                },
-              ]}
-            >
-              {box.kind === 'blur' ? <Text style={styles.blurLabel}>Blurred</Text> : null}
-            </View>
-          ))}
+          {[...boxes, ...(draft ? [draft] : [])].map((box, index) =>
+            box.kind === 'draw' ? (
+              // biome-ignore lint/suspicious/noArrayIndexKey: marks have no identity beyond their order
+              <Stroke key={index} points={box.points} width={width} height={height} />
+            ) : (
+              <View
+                // biome-ignore lint/suspicious/noArrayIndexKey: boxes have no identity beyond their order
+                key={index}
+                pointerEvents="none"
+                style={[
+                  styles.box,
+                  box.kind === 'blur' ? styles.blurBox : styles.highlightBox,
+                  {
+                    left: box.x * width,
+                    top: box.y * height,
+                    width: box.w * width,
+                    height: box.h * height,
+                  },
+                ]}
+              >
+                {box.kind === 'blur' ? <Text style={styles.blurLabel}>Blurred</Text> : null}
+              </View>
+            ),
+          )}
         </View>
 
         <View style={styles.footer}>
           <Text style={styles.hint}>
             {boxes.length === 0
-              ? 'Drag on the screenshot to draw a box.'
-              : `${boxes.length} mark${boxes.length === 1 ? '' : 's'}`}
+              ? MODES.find((m) => m.mode === kind)?.hint
+              : boxes.length >= MAX_ANNOTATIONS
+                ? `${MAX_ANNOTATIONS} marks is the most. Undo one to add another.`
+                : `${boxes.length} mark${boxes.length === 1 ? '' : 's'}`}
           </Text>
           {boxes.length > 0 ? (
             <Pressable
@@ -162,7 +200,48 @@ export function Annotator({
   )
 }
 
+const STROKE_WIDTH = 4
+
+/** A freehand mark, drawn as short rotated bars so it needs no SVG library. */
+function Stroke({
+  points,
+  width,
+  height,
+}: {
+  points: [number, number][]
+  width: number
+  height: number
+}) {
+  return (
+    <>
+      {strokeSegments(points, { width, height }).map((segment, i) => (
+        <View
+          // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional
+          key={i}
+          pointerEvents="none"
+          style={[
+            styles.segment,
+            {
+              left: segment.left,
+              top: segment.top - STROKE_WIDTH / 2,
+              // A little longer than the gap, so joints don't show.
+              width: segment.length + STROKE_WIDTH / 2,
+              transform: [{ rotate: `${segment.angle}rad` }],
+            },
+          ]}
+        />
+      ))}
+    </>
+  )
+}
+
 const styles = StyleSheet.create({
+  segment: {
+    position: 'absolute',
+    height: STROKE_WIDTH,
+    borderRadius: STROKE_WIDTH / 2,
+    backgroundColor: '#e5484d',
+  },
   screen: {
     flex: 1,
     alignItems: 'center',

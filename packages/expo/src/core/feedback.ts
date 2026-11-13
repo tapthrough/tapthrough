@@ -1,5 +1,5 @@
 import type { Platform } from '@tapthrough/protocol'
-import type { AnnotationBox } from './annotations.js'
+import type { Annotation } from './annotations.js'
 import type { Diagnostics } from './diagnostics.js'
 
 /** Which PR build is running, read from the loaded EAS update's manifest. */
@@ -67,7 +67,7 @@ export interface FeedbackInput {
   screenshot?: { contentType: 'image/jpeg' | 'image/png'; base64: string }
   diagnostics?: Diagnostics
   /** Boxes drawn on the screenshot; only sent with a screenshot. */
-  annotations?: AnnotationBox[]
+  annotations?: Annotation[]
   /** The reporter's own call; left out, Tapthrough guesses. */
   cause?: 'pr' | 'unrelated'
 }
