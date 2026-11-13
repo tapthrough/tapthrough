@@ -21,7 +21,7 @@ import type {
   SetupLine,
 } from './core/feedback.js'
 import { resetMessage } from './core/feedback.js'
-import type { Idea, OpenPr } from './core/ideas.js'
+import { type Idea, type IdeaStage, type OpenPr, stepTime } from './core/ideas.js'
 import {
   nextOpenScenario,
   otherStates,
@@ -386,11 +386,21 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
                   <Badge
                     icon="lightbulb"
                     colors={colors}
-                    attention={idea.status === 'needs_answers' || idea.status === 'ready_to_test'}
+                    attention={
+                      idea.status === 'needs_answers' ||
+                      idea.status === 'ready_to_test' ||
+                      Boolean(idea.warning)
+                    }
                   />
                 }
                 title={ideaTitle(idea)}
-                subtitle={idea.statusLine}
+                subtitle={
+                  idea.warning
+                    ? `${idea.statusLine} · taking longer than usual`
+                    : idea.status === 'failed' || idea.status === 'not_set_up'
+                      ? `${idea.statusLine} · tap to see why`
+                      : idea.statusLine
+                }
                 onPress={() => p.onNav({ view: 'idea', id: idea.id }, 'forward')}
               />
             ))}
@@ -470,10 +480,27 @@ function ideaView(p: ReviewPopoverProps, idea: Idea, colors: Colors): Screen {
         ) : (
           <Text style={[text.subhead, { color: colors.label }]}>“{idea.body}”</Text>
         )}
-        {idea.note ? (
+        {idea.warning ? (
+          <View style={[styles.newer, { backgroundColor: colors.fill }]}>
+            <Icon name="flag.fill" size={16} color={colors.fail} />
+            <View style={styles.rowText}>
+              <Text style={[text.footnote, { color: colors.label }]}>{idea.warning}</Text>
+              <LinkRow
+                links={[
+                  idea.runUrl ? { title: 'View Run', url: idea.runUrl } : null,
+                  idea.actionsUrl ? { title: 'Open Actions', url: idea.actionsUrl } : null,
+                ]}
+                colors={colors}
+              />
+            </View>
+          </View>
+        ) : null}
+        {idea.stages?.length ? (
+          <Timeline stages={idea.stages} colors={colors} />
+        ) : idea.note ? (
           <Text style={[text.footnote, { color: colors.secondary }]}>{idea.note}</Text>
         ) : null}
-        {idea.status === 'grooming' || idea.status === 'building' ? (
+        {!idea.stages?.length && (idea.status === 'grooming' || idea.status === 'building') ? (
           <View style={styles.pair}>
             <ActivityIndicator color={colors.secondary} />
             <Text style={[text.footnote, styles.rowText, { color: colors.secondary }]}>
@@ -507,26 +534,124 @@ function ideaView(p: ReviewPopoverProps, idea: Idea, colors: Colors): Screen {
               : 'Open its build, try the steps, then approve it from there.'}
           </Text>
         ) : null}
-        {links.length ? (
-          <View style={styles.pair}>
-            {links.map((link) => (
-              <Pressable
-                key={link.url}
-                onPress={() => Linking.openURL(link.url)}
-                accessibilityRole="link"
-                hitSlop={8}
-              >
-                <Text style={[text.footnote, styles.rowTitle, { color: colors.tint }]}>
-                  {link.title}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
+        <LinkRow
+          links={[
+            ...links,
+            idea.runUrl && !idea.warning ? { title: 'Workflow Run', url: idea.runUrl } : null,
+          ]}
+          colors={colors}
+        />
       </>
     ),
     footer,
   }
+}
+
+/** Small text links in a row, e.g. the issue, the PR and the workflow run. */
+function LinkRow({
+  links,
+  colors,
+}: {
+  links: ({ title: string; url: string } | null)[]
+  colors: Colors
+}) {
+  const shown = links.filter((l): l is { title: string; url: string } => l !== null)
+  if (!shown.length) return null
+  return (
+    <View style={styles.links}>
+      {shown.map((link) => (
+        <Pressable
+          key={link.url}
+          onPress={() => Linking.openURL(link.url)}
+          accessibilityRole="link"
+          hitSlop={8}
+        >
+          <Text style={[text.footnote, styles.rowTitle, { color: colors.tint }]}>{link.title}</Text>
+        </Pressable>
+      ))}
+    </View>
+  )
+}
+
+/**
+ * Every step from sent to merged with its state, so it's always clear whether
+ * the idea reached GitHub, what's running now, and where it stopped.
+ */
+function Timeline({ stages, colors }: { stages: IdeaStage[]; colors: Colors }) {
+  return (
+    <View style={styles.timeline} accessibilityRole="list">
+      {stages.map((stage, i) => {
+        const time = stage.state === 'done' ? stepTime(stage.at) : null
+        const last = i === stages.length - 1
+        return (
+          <View
+            key={stage.key}
+            style={styles.stage}
+            accessible
+            accessibilityLabel={`${stage.title}: ${STATE_LABEL[stage.state]}${stage.detail ? `. ${stage.detail}` : ''}`}
+          >
+            <View style={styles.stageRail}>
+              <StageMark state={stage.state} colors={colors} />
+              {last ? null : (
+                <View
+                  style={[
+                    styles.stageLine,
+                    { backgroundColor: stage.state === 'done' ? colors.pass : colors.separator },
+                  ]}
+                />
+              )}
+            </View>
+            <View style={[styles.rowText, !last && styles.stageGap]}>
+              <View style={styles.stageHead}>
+                <Text
+                  style={[
+                    text.subhead,
+                    stage.state === 'waiting' ? null : styles.rowTitle,
+                    { color: stage.state === 'waiting' ? colors.secondary : colors.label },
+                  ]}
+                >
+                  {stage.title}
+                </Text>
+                {time ? (
+                  <Text style={[text.footnote, { color: colors.secondary }]}>{time}</Text>
+                ) : null}
+              </View>
+              {stage.detail ? (
+                <Text
+                  style={[
+                    text.footnote,
+                    { color: stage.state === 'failed' ? colors.fail : colors.secondary },
+                  ]}
+                >
+                  {stage.detail}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        )
+      })}
+    </View>
+  )
+}
+
+const STATE_LABEL: Record<IdeaStage['state'], string> = {
+  done: 'done',
+  active: 'in progress',
+  waiting: 'not started',
+  failed: 'stopped',
+}
+
+function StageMark({ state, colors }: { state: IdeaStage['state']; colors: Colors }) {
+  if (state === 'done') return <Mark kind="pass" colors={colors} size={20} />
+  if (state === 'failed') return <Mark kind="fail" colors={colors} size={20} />
+  if (state === 'active') {
+    return (
+      <View style={styles.stageDot}>
+        <ActivityIndicator size="small" color={colors.tint} />
+      </View>
+    )
+  }
+  return <View style={[styles.stageDot, styles.stageHollow, { borderColor: colors.separator }]} />
 }
 
 /** One field per question; sending is enabled once every question has an answer. */
@@ -1233,6 +1358,15 @@ const styles = StyleSheet.create({
   },
   nameInput: { borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10, marginTop: 6 },
   question: { gap: 2 },
+  links: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginTop: 4 },
+  timeline: { marginTop: 2 },
+  stage: { flexDirection: 'row', gap: 10 },
+  stageRail: { width: 20, alignItems: 'center' },
+  stageLine: { width: 2, flex: 1, marginVertical: 2, borderRadius: 1 },
+  stageGap: { paddingBottom: 12 },
+  stageHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  stageDot: { width: 20, height: 20, alignItems: 'center', justifyContent: 'center' },
+  stageHollow: { borderWidth: 2, borderRadius: 10, width: 16, height: 16, margin: 2 },
   attention: {
     position: 'absolute',
     top: -1,

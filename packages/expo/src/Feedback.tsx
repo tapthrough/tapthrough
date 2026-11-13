@@ -51,6 +51,7 @@ import {
   type IdeaDraft,
   ideaAction,
   ideasNeedingYou,
+  isMoving,
   type OpenPr,
   submitIdea,
 } from './core/ideas.js'
@@ -143,6 +144,8 @@ interface FailingStep {
 
 /** How often a PR preview checks for new results and newer builds while in the foreground. */
 const REFRESH_MS = 30_000
+/** How often an open idea that's moving checks for its next step. */
+const IDEA_REFRESH_MS = 8_000
 
 /** Update groups the reviewer has already been told about, so the toast shows once. */
 const announcedBuilds = new Set<string>()
@@ -241,6 +244,17 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
       subscription.remove()
     }
   }, [preview, platform, apiUrl])
+
+  // Watching an idea that's being written up or built: check every few seconds, not every 30.
+  const watched = nav.view === 'idea' ? ideas.find((i) => i.id === nav.id) : undefined
+  const watching = phase === 'open' && watched !== undefined && isMoving(watched)
+  useEffect(() => {
+    if (!watching || !preview || !platform) return
+    const timer = setInterval(async () => {
+      setIdeas(await fetchIdeas(preview, platform, { apiUrl }))
+    }, IDEA_REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [watching, preview, platform, apiUrl])
 
   useEffect(() => {
     if (!toast) return

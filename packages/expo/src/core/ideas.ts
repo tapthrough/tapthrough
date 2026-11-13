@@ -17,6 +17,15 @@ export type IdeaStatus =
 
 export type IdeaAction = 'answer' | 'build' | 'approve' | 'retry'
 
+/** One step from sent to merged: done, in progress, not reached yet, or where it stopped. */
+export interface IdeaStage {
+  key: 'sent' | 'written' | 'built' | 'preview' | 'merged'
+  title: string
+  state: 'done' | 'active' | 'waiting' | 'failed'
+  detail: string | null
+  at: string | null
+}
+
 /** An idea someone sent from the app, as Tapthrough reports it. */
 export interface Idea {
   id: string
@@ -35,6 +44,12 @@ export interface Idea {
   note: string | null
   /** e.g. "Claude has a question", from the server so wording can change without an app update. */
   statusLine: string
+  /** Older servers send none; the app then shows the status line only. */
+  stages?: IdeaStage[]
+  /** Something looks stuck or slow; null when all is well. */
+  warning?: string | null
+  runUrl?: string | null
+  actionsUrl?: string
   createdAt: string
   actions: IdeaAction[]
 }
@@ -243,4 +258,20 @@ export function approveMessage(outcome: ApproveOutcome | null): string {
   if (outcome === 'merged') return 'Approved and merged.'
   if (outcome === 'auto_merge') return 'Approved. It merges once its checks pass.'
   return 'Approved. An engineer reviews and merges it.'
+}
+
+/** Grooming, building or waiting on a preview: worth refreshing often while someone watches. */
+export function isMoving(idea: Idea): boolean {
+  return idea.status === 'grooming' || idea.status === 'building' || idea.status === 'built'
+}
+
+/** "2:41 PM" today, "Nov 10" before, for a timeline step. */
+export function stepTime(iso: string | null, now = new Date()): string | null {
+  if (!iso) return null
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return null
+  const sameDay = date.toDateString() === now.toDateString()
+  return sameDay
+    ? date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }

@@ -6,6 +6,8 @@ import {
   type Idea,
   ideaAction,
   ideasNeedingYou,
+  isMoving,
+  stepTime,
   submitIdea,
 } from './ideas.js'
 
@@ -107,5 +109,20 @@ describe('ideasNeedingYou', () => {
   it('counts questions and builds to test', () => {
     const at = (status: Idea['status']) => ({ ...idea, status })
     expect(ideasNeedingYou([at('needs_answers'), at('ready_to_test'), at('building')])).toBe(2)
+  })
+})
+
+describe('watching an idea', () => {
+  it('refreshes often only while it moves', () => {
+    expect(isMoving({ ...idea, status: 'building' })).toBe(true)
+    expect(isMoving({ ...idea, status: 'built' })).toBe(true)
+    expect(isMoving({ ...idea, status: 'needs_answers' })).toBe(false)
+  })
+
+  it('shows a time today and a date before', () => {
+    const now = new Date('2026-11-12T15:00:00')
+    expect(stepTime('2026-11-12T14:41:00', now)).toMatch(/2:41/)
+    expect(stepTime('2026-11-10T09:00:00', now)).toMatch(/10/)
+    expect(stepTime(null, now)).toBeNull()
   })
 })
