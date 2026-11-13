@@ -31,6 +31,8 @@ describe('pluginConfig', () => {
       enabled: false,
       seedHookUrl: undefined,
       apiUrl: 'https://tapthrough.dev',
+      staff: false,
+      appKey: undefined,
     })
   })
 })

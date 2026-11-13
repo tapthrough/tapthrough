@@ -7,11 +7,13 @@ import {
   ideaAction,
   ideasNeedingYou,
   isMoving,
+  sendStaffReport,
   stepTime,
   submitIdea,
 } from './ideas.js'
 
 const preview = { updateGroupId: 'g1', projectId: 'p1', branch: 'pr-3' }
+const caller = { kind: 'build' as const, preview }
 const apiUrl = 'https://t.dev/'
 
 function respond(status: number, body: unknown) {
@@ -25,7 +27,7 @@ describe('submitIdea', () => {
     const fetch = respond(201, { idea })
     const result = await submitIdea(
       {
-        preview,
+        caller,
         platform: 'ios',
         draft: { body: 'Pin notes', authorEmail: 'jane@acme.com', route: '/notes' },
       },
@@ -48,7 +50,7 @@ describe('submitIdea', () => {
   it('says why when Tapthrough refuses, and when it is too old', async () => {
     expect(
       await submitIdea(
-        { preview, platform: 'ios', draft: { body: 'x' } },
+        { caller, platform: 'ios', draft: { body: 'x' } },
         {
           apiUrl,
           fetch: respond(403, { error: { message: 'Ideas are turned off for this app.' } }),
@@ -57,7 +59,7 @@ describe('submitIdea', () => {
     ).toEqual({ ok: false, message: 'Ideas are turned off for this app.' })
     expect(
       await submitIdea(
-        { preview, platform: 'ios', draft: { body: 'x' } },
+        { caller, platform: 'ios', draft: { body: 'x' } },
         { apiUrl, fetch: respond(404, {}) },
       ),
     ).toEqual({ ok: false, message: 'This version of Tapthrough doesn’t take ideas yet.' })
@@ -68,7 +70,7 @@ describe('submitIdea', () => {
       throw new TypeError('Network request failed')
     })
     const result = await submitIdea(
-      { preview, platform: 'ios', draft: { body: 'x' } },
+      { caller, platform: 'ios', draft: { body: 'x' } },
       { apiUrl, fetch },
     )
     expect(result.ok).toBe(false)
@@ -78,9 +80,9 @@ describe('submitIdea', () => {
 describe('lists', () => {
   it('reads ideas, and an empty list when it cannot', async () => {
     expect(
-      await fetchIdeas(preview, 'ios', { apiUrl, fetch: respond(200, { ideas: [idea] }) }),
+      await fetchIdeas(caller, 'ios', { apiUrl, fetch: respond(200, { ideas: [idea] }) }),
     ).toEqual([idea])
-    expect(await fetchIdeas(preview, 'ios', { apiUrl, fetch: respond(500, {}) })).toEqual([])
+    expect(await fetchIdeas(caller, 'ios', { apiUrl, fetch: respond(500, {}) })).toEqual([])
   })
 
   it('reads open PRs, and null when it cannot', async () => {
@@ -96,7 +98,7 @@ describe('lists', () => {
 describe('ideaAction', () => {
   it('reports what Approve did', async () => {
     const result = await ideaAction(
-      { preview, platform: 'ios', id: 'i1', action: 'approve', by: 'Jane' },
+      { caller, platform: 'ios', id: 'i1', action: 'approve', by: 'Jane' },
       { apiUrl, fetch: respond(200, { idea, result: 'auto_merge' }) },
     )
     expect(result).toEqual({ ok: true, idea, approve: 'auto_merge' })
@@ -124,5 +126,43 @@ describe('watching an idea', () => {
     expect(stepTime('2026-11-12T14:41:00', now)).toMatch(/2:41/)
     expect(stepTime('2026-11-10T09:00:00', now)).toMatch(/10/)
     expect(stepTime(null, now)).toBeNull()
+  })
+})
+
+describe('app key callers', () => {
+  const key = { kind: 'key' as const, appKey: 'k'.repeat(40) }
+
+  it('send the key instead of the build, in bodies and queries', async () => {
+    const post = respond(201, { idea })
+    await submitIdea(
+      { caller: key, platform: 'ios', draft: { body: 'Pin notes' } },
+      { apiUrl, fetch: post },
+    )
+    const [, init] = post.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(String(init.body))).toEqual({
+      apiVersion: 1,
+      appKey: 'k'.repeat(40),
+      platform: 'ios',
+      body: 'Pin notes',
+    })
+    const get = respond(200, { ideas: [] })
+    await fetchIdeas(key, 'android', { apiUrl, fetch: get })
+    expect(String((get.mock.calls[0] as unknown as [string])[0])).toBe(
+      `https://t.dev/api/v1/ideas?appKey=${'k'.repeat(40)}&platform=android`,
+    )
+  })
+
+  it('file staff reports as issues', async () => {
+    const fetch = respond(201, { issueNumber: 12, issueUrl: 'https://github.com/a/b/issues/12' })
+    const result = await sendStaffReport(
+      { appKey: key.appKey, platform: 'ios', report: { body: 'Broken', app: { build: '311' } } },
+      { apiUrl, fetch },
+    )
+    expect(result).toEqual({
+      ok: true,
+      issueNumber: 12,
+      issueUrl: 'https://github.com/a/b/issues/12',
+    })
+    expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe('https://t.dev/api/v1/reports')
   })
 })

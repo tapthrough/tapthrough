@@ -78,13 +78,33 @@ interface Options {
 
 const OFFLINE = "Couldn't reach Tapthrough. Check your connection and try again."
 
-function credential(preview: PreviewContext, platform: Platform) {
-  return {
-    apiVersion: 1,
-    updateGroupId: preview.updateGroupId,
-    projectId: preview.projectId,
-    platform,
-  }
+/**
+ * Who's asking: a PR build, proved by its running update, or a staging or
+ * TestFlight build, proved by the repo's app key.
+ */
+export type Caller = { kind: 'build'; preview: PreviewContext } | { kind: 'key'; appKey: string }
+
+function credential(caller: Caller, platform: Platform) {
+  return caller.kind === 'build'
+    ? {
+        apiVersion: 1,
+        updateGroupId: caller.preview.updateGroupId,
+        projectId: caller.preview.projectId,
+        platform,
+      }
+    : { apiVersion: 1, appKey: caller.appKey, platform }
+}
+
+function query(caller: Caller, platform: Platform) {
+  return new URLSearchParams(
+    caller.kind === 'build'
+      ? {
+          updateGroupId: caller.preview.updateGroupId,
+          projectId: caller.preview.projectId,
+          platform,
+        }
+      : { appKey: caller.appKey, platform },
+  )
 }
 
 async function call<T>(
@@ -131,7 +151,7 @@ export interface IdeaDraft {
 
 /** Sends an idea; Claude starts writing it up in the repo's fix workflow. Never throws. */
 export function submitIdea(
-  input: { preview: PreviewContext; platform: Platform; draft: IdeaDraft },
+  input: { caller: Caller; platform: Platform; draft: IdeaDraft },
   options: Options,
 ) {
   const { draft } = input
@@ -141,7 +161,7 @@ export function submitIdea(
     {
       method: 'POST',
       body: {
-        ...credential(input.preview, input.platform),
+        ...credential(input.caller, input.platform),
         body: draft.body,
         ...(draft.authorName ? { authorName: draft.authorName } : {}),
         ...(draft.authorEmail ? { authorEmail: draft.authorEmail } : {}),
@@ -156,16 +176,12 @@ export function submitIdea(
 
 /** The app's recent ideas, newest first; an empty list when Tapthrough can't say. */
 export async function fetchIdeas(
-  preview: PreviewContext,
+  caller: Caller,
   platform: Platform,
   options: Options,
 ): Promise<Idea[]> {
-  const query = new URLSearchParams({
-    updateGroupId: preview.updateGroupId,
-    projectId: preview.projectId,
-    platform,
-  })
-  const result = await call(options, `/api/v1/ideas?${query}`, { method: 'GET' }, (body) =>
+  const path = `/api/v1/ideas?${query(caller, platform)}`
+  const result = await call(options, path, { method: 'GET' }, (body) =>
     Array.isArray(body.ideas) ? { ideas: body.ideas as Idea[] } : undefined,
   )
   return result.ok ? result.ideas : []
@@ -177,12 +193,8 @@ export async function fetchOpenPrs(
   platform: Platform,
   options: Options,
 ): Promise<OpenPr[] | null> {
-  const query = new URLSearchParams({
-    updateGroupId: preview.updateGroupId,
-    projectId: preview.projectId,
-    platform,
-  })
-  const result = await call(options, `/api/v1/pulls?${query}`, { method: 'GET' }, (body) =>
+  const path = `/api/v1/pulls?${query({ kind: 'build', preview }, platform)}`
+  const result = await call(options, path, { method: 'GET' }, (body) =>
     Array.isArray(body.pulls) ? { pulls: body.pulls as OpenPr[] } : undefined,
   )
   return result.ok ? result.pulls : null
@@ -191,7 +203,7 @@ export async function fetchOpenPrs(
 /** Answers Claude's questions; it writes the idea up again with them. Never throws. */
 export function answerIdea(
   input: {
-    preview: PreviewContext
+    caller: Caller
     platform: Platform
     id: string
     answers: string[]
@@ -205,7 +217,7 @@ export function answerIdea(
     {
       method: 'POST',
       body: {
-        ...credential(input.preview, input.platform),
+        ...credential(input.caller, input.platform),
         answers: input.answers,
         ...(input.by ? { by: input.by } : {}),
       },
@@ -217,7 +229,7 @@ export function answerIdea(
 /** Build It, Retry or Approve on one idea. Never throws. */
 export function ideaAction(
   input: {
-    preview: PreviewContext
+    caller: Caller
     platform: Platform
     id: string
     action: 'build' | 'retry' | 'approve'
@@ -230,7 +242,7 @@ export function ideaAction(
     `/api/v1/ideas/${encodeURIComponent(input.id)}/${input.action}`,
     {
       method: 'POST',
-      body: { ...credential(input.preview, input.platform), ...(input.by ? { by: input.by } : {}) },
+      body: { ...credential(input.caller, input.platform), ...(input.by ? { by: input.by } : {}) },
     },
     (body) => {
       const picked = pickIdea(body)
@@ -274,4 +286,52 @@ export function stepTime(iso: string | null, now = new Date()): string | null {
   return sameDay
     ? date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
     : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+export interface StaffReport {
+  body: string
+  reporterName?: string
+  route?: string
+  device?: { os?: string; osVersion?: string; model?: string }
+  app?: { version?: string; build?: string }
+  screenshot?: { contentType: 'image/jpeg' | 'image/png'; base64: string }
+  annotations?: unknown[]
+  diagnostics?: unknown
+}
+
+/**
+ * Files a report from a staging or TestFlight build. There's no PR to comment
+ * on, so Tapthrough opens a GitHub issue. Never throws.
+ */
+export function sendStaffReport(
+  input: { appKey: string; platform: Platform; report: StaffReport },
+  options: Options,
+) {
+  const { report } = input
+  return call(
+    options,
+    '/api/v1/reports',
+    {
+      method: 'POST',
+      body: {
+        apiVersion: 1,
+        appKey: input.appKey,
+        platform: input.platform,
+        body: report.body,
+        ...(report.reporterName ? { reporterName: report.reporterName } : {}),
+        ...(report.route ? { route: report.route } : {}),
+        ...(report.device ? { device: report.device } : {}),
+        ...(report.app ? { app: report.app } : {}),
+        ...(report.screenshot ? { screenshot: report.screenshot } : {}),
+        ...(report.screenshot && report.annotations?.length
+          ? { annotations: report.annotations }
+          : {}),
+        ...(report.diagnostics ? { diagnostics: report.diagnostics } : {}),
+      },
+    },
+    (body) =>
+      typeof body.issueNumber === 'number' && typeof body.issueUrl === 'string'
+        ? { issueNumber: body.issueNumber, issueUrl: body.issueUrl }
+        : undefined,
+  )
 }

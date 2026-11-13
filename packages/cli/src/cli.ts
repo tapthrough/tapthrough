@@ -8,6 +8,7 @@ import {
   parseLinkRef,
   requestLaunch,
 } from './agent.js'
+import { detectRepo, formatAppKey, githubToken, requestAppKey } from './app-key.js'
 import { checkScenarios, formatIssues } from './check.js'
 import { buildMap, formatMap } from './map.js'
 import { loadProject, type Project } from './project.js'
@@ -20,13 +21,16 @@ Commands:
   plan    <pr-link>  What to check on a PR, for an agent driving a simulator
   launch  <pr-link> --scenario <key>  Print a single-use link that signs in,
           seeds and opens one scenario (expires in 15 minutes)
+  app-key Make a key that lets staging and TestFlight builds send reports and
+          ideas. Uses your GitHub login (gh auth token) to check write access
 
 Options:
   --dir <path>         The Expo app's directory (default: current directory)
   --platform <p>       ios or android (plan and launch; default: ios)
   --scenario <key>     The scenario to launch
   --server <url>       Tapthrough server for bare link IDs (default: $TAPTHROUGH_URL or ${DEFAULT_SERVER})
-  --json               Print machine-readable output (map, plan, launch)
+  --repo <owner/name>  The GitHub repo (app-key; default: the origin remote)
+  --json               Print machine-readable output (map, plan, launch, app-key)
   -h, --help           Show this help
 
 Docs: https://github.com/tapthrough/tapthrough/blob/main/docs/scenario-map.md
@@ -60,6 +64,7 @@ async function main(argv: string[]): Promise<number> {
       platform: { type: 'string', default: 'ios' },
       scenario: { type: 'string' },
       server: { type: 'string' },
+      repo: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   })
@@ -96,6 +101,28 @@ async function main(argv: string[]): Promise<number> {
     }
     const launch = await requestLaunch(link, { platform: platform.data, scenario: values.scenario })
     console.log(values.json ? JSON.stringify(launch, null, 2) : launch.launchUrl)
+    return 0
+  }
+
+  if (command === 'app-key') {
+    const repo = values.repo ?? detectRepo(values.dir)
+    if (!repo) {
+      console.error('Couldn’t tell which GitHub repo this is. Pass --repo owner/name.')
+      return 1
+    }
+    const token = githubToken(values.dir)
+    if (!token) {
+      console.error('Sign in to GitHub first (`gh auth login`), or set GITHUB_TOKEN.')
+      return 1
+    }
+    const result = await requestAppKey(
+      values.server ?? process.env.TAPTHROUGH_URL ?? DEFAULT_SERVER,
+      {
+        repo,
+        token,
+      },
+    )
+    console.log(values.json ? JSON.stringify(result, null, 2) : formatAppKey(result))
     return 0
   }
 

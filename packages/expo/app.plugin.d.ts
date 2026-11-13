@@ -5,6 +5,13 @@ export interface TapthroughPluginProps {
   seedHookUrl?: string
   /** Tapthrough's base URL, where in-app reports go. Defaults to `https://tapthrough.dev`. */
   apiUrl?: string
+  /**
+   * Staging and TestFlight builds: shows a feedback button outside PR previews,
+   * to report issues and share ideas. Never turn it on for store builds.
+   */
+  staff?: boolean
+  /** The repo's app key from `npx @tapthrough/cli app-key`; required with `staff`. */
+  appKey?: string
 }
 
 type ExpoConfig = { scheme?: string | string[]; extra?: Record<string, unknown> } & Record<
@@ -17,7 +24,13 @@ declare function withTapthrough<T extends ExpoConfig>(
   props?: TapthroughPluginProps,
 ): T & {
   extra: NonNullable<T['extra']> & {
-    tapthrough: { enabled: boolean; seedHookUrl: string | undefined; apiUrl?: string }
+    tapthrough: {
+      enabled: boolean
+      seedHookUrl: string | undefined
+      apiUrl?: string
+      staff?: boolean
+      appKey?: string
+    }
   }
 }
 

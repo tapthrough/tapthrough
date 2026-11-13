@@ -45,6 +45,7 @@ import {
 import {
   answerIdea,
   approveMessage,
+  type Caller,
   fetchIdeas,
   fetchOpenPrs,
   type Idea,
@@ -53,6 +54,7 @@ import {
   ideasNeedingYou,
   isMoving,
   type OpenPr,
+  sendStaffReport,
   submitIdea,
 } from './core/ideas.js'
 import { nextOpenStep, popoverPlacement, type Results, resultsFrom, stepId } from './core/review.js'
@@ -109,6 +111,35 @@ function deviceLabel() {
   return `${model ?? os} · ${os} ${osVersion}`
 }
 
+/** The app's version and build, from its config, for reports from staff builds. */
+function appVersion(): { version?: string; build?: string } {
+  const config = Constants.expoConfig
+  const build = Platform.OS === 'ios' ? config?.ios?.buildNumber : config?.android?.versionCode
+  return {
+    ...(config?.version ? { version: config.version } : {}),
+    ...(build !== undefined ? { build: String(build) } : {}),
+  }
+}
+
+/** e.g. "Version 2.4.0 (311)", for staff builds' panel and composer. */
+function appLabel(): string {
+  const { version, build } = appVersion()
+  if (!version) return 'This build'
+  return build ? `Version ${version} (${build})` : `Version ${version}`
+}
+
+/** What a staff build's panel shows instead of a PR's checklist: nothing to check. */
+const STAFF_CHECKLIST: Checklist = {
+  pr: 0,
+  sha: '',
+  open: true,
+  scenarios: [],
+  recheck: [],
+  library: [],
+  newerBuild: null,
+  reset: null,
+}
+
 function nextFrame() {
   return new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -159,13 +190,28 @@ type Phase = 'idle' | 'loading' | 'open' | 'capturing' | 'composing'
  * to reporting an issue with a screenshot of the screen behind it. It keeps
  * the checklist fresh in the background, so it can say when a newer build is out.
  */
-export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: boolean }) {
+export function ReportButton({
+  apiUrl,
+  canSetUp,
+  appKey,
+}: {
+  apiUrl: string
+  canSetUp: boolean
+  /** Set on staging and TestFlight builds: feedback works outside PR previews. */
+  appKey?: string | undefined
+}) {
   const preview = useMemo(() => previewContextFromManifest(Constants.manifest2), [])
+  // A PR build proves itself with its update; any other build needs the app key.
+  const caller = useMemo<Caller | null>(
+    () => (preview ? { kind: 'build', preview } : appKey ? { kind: 'key', appKey } : null),
+    [preview, appKey],
+  )
+  const staffMode = caller?.kind === 'key'
   const pathname = usePathname()
   const { width, height } = useWindowDimensions()
   const bounds = screenBounds(width, height)
   const [phase, setPhase] = useState<Phase>('idle')
-  const [checklist, setChecklist] = useState<Checklist | null>(null)
+  const [checklist, setChecklist] = useState<Checklist | null>(staffMode ? STAFF_CHECKLIST : null)
   const [nav, setNav] = useState<Nav>({ view: 'list' })
   const [direction, setDirection] = useState<Direction>('forward')
   const [full, setFull] = useState(false)
@@ -189,9 +235,9 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
     [checklist, overrides],
   )
 
-  // Only PR previews record diagnostics; regular builds are never hooked.
+  // PR previews and staff builds record diagnostics; store builds are never hooked.
   useEffect(() => {
-    if (!preview || diagnosticsInstalled) return
+    if (!caller || diagnosticsInstalled) return
     diagnosticsInstalled = true
     installDiagnostics(
       diagnostics,
@@ -202,17 +248,17 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
       },
       apiUrl,
     )
-  }, [preview, apiUrl])
+  }, [caller, apiUrl])
 
   useEffect(() => {
-    if (preview) diagnostics.recordScreen(pathname)
-  }, [preview, pathname])
+    if (caller) diagnostics.recordScreen(pathname)
+  }, [caller, pathname])
 
   async function refresh() {
-    if (!preview || !platform) return null
+    if (!caller || !platform) return null
     const [list, recent] = await Promise.all([
-      fetchChecklist(preview, platform, { apiUrl }),
-      fetchIdeas(preview, platform, { apiUrl }),
+      preview ? fetchChecklist(preview, platform, { apiUrl }) : Promise.resolve(STAFF_CHECKLIST),
+      fetchIdeas(caller, platform, { apiUrl }),
     ])
     if (list) setChecklist(list)
     setIdeas(recent)
@@ -227,7 +273,7 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
   // Fetch up front so the popover opens instantly, then poll while the app is in front.
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh reads current props
   useEffect(() => {
-    if (!preview || !platform) return
+    if (!caller || !platform) return
     let timer: ReturnType<typeof setInterval> | undefined
     const start = () => {
       clearInterval(timer)
@@ -243,18 +289,18 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
       stop()
       subscription.remove()
     }
-  }, [preview, platform, apiUrl])
+  }, [caller, platform, apiUrl])
 
   // Watching an idea that's being written up or built: check every few seconds, not every 30.
   const watched = nav.view === 'idea' ? ideas.find((i) => i.id === nav.id) : undefined
   const watching = phase === 'open' && watched !== undefined && isMoving(watched)
   useEffect(() => {
-    if (!watching || !preview || !platform) return
+    if (!watching || !caller || !platform) return
     const timer = setInterval(async () => {
-      setIdeas(await fetchIdeas(preview, platform, { apiUrl }))
+      setIdeas(await fetchIdeas(caller, platform, { apiUrl }))
     }, IDEA_REFRESH_MS)
     return () => clearInterval(timer)
-  }, [watching, preview, platform, apiUrl])
+  }, [watching, caller, platform, apiUrl])
 
   useEffect(() => {
     if (!toast) return
@@ -295,7 +341,7 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
     return () => clearTimeout(timer)
   }, [setup])
 
-  if (!preview || !platform) return null
+  if (!caller || !platform) return null
 
   function go(next: Nav, dir: Direction = 'forward') {
     setDirection(dir)
@@ -469,11 +515,11 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
   }
 
   async function answer(id: string, answers: string[]) {
-    if (!preview || !platform) return
+    if (!caller || !platform) return
     rememberName()
     setIdeaBusy(id)
     const result = await answerIdea(
-      { preview, platform, id, answers, ...(rememberedName ? { by: rememberedName } : {}) },
+      { caller, platform, id, answers, ...(rememberedName ? { by: rememberedName } : {}) },
       { apiUrl },
     )
     setIdeaBusy(null)
@@ -487,12 +533,12 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
   }
 
   async function act(id: string, action: 'build' | 'retry' | 'approve') {
-    if (!preview || !platform) return
+    if (!caller || !platform) return
     rememberName()
     haptics.selection()
     setIdeaBusy(id)
     const result = await ideaAction(
-      { preview, platform, id, action, ...(rememberedName ? { by: rememberedName } : {}) },
+      { caller, platform, id, action, ...(rememberedName ? { by: rememberedName } : {}) },
       { apiUrl },
     )
     setIdeaBusy(null)
@@ -558,6 +604,7 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
       ) : null}
       {phase === 'open' && checklist ? (
         <ReviewPopover
+          staff={staffMode ? appLabel() : null}
           checklist={checklist}
           results={results}
           rechecked={rechecked}
@@ -617,7 +664,24 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
         <Composer
           screenshot={screenshot}
           route={pathname}
-          branch={preview.branch}
+          branch={preview?.branch}
+          staff={staffMode ? appLabel() : null}
+          onSendStaff={(input) =>
+            sendStaffReport(
+              {
+                appKey: appKey ?? '',
+                platform,
+                report: {
+                  ...input,
+                  route: pathname,
+                  device: deviceInfo(),
+                  app: appVersion(),
+                  diagnostics: diagnostics.snapshot(),
+                },
+              },
+              { apiUrl },
+            )
+          }
           device={deviceLabel()}
           hasScenario={Boolean(controller.lastScenarioId())}
           failedStep={failing?.step ?? null}
@@ -626,7 +690,7 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
           onSendIdea={(draft) =>
             submitIdea(
               {
-                preview,
+                caller,
                 platform,
                 draft: { ...draft, route: pathname, device: deviceInfo() },
               },
@@ -635,6 +699,7 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
           }
           onViewIdea={viewIdea}
           onSend={async (input) => {
+            if (!preview) return { ok: false as const, message: 'This build isn’t a PR preview.' }
             const result = await sendFeedback(
               {
                 ...input,
@@ -667,19 +732,31 @@ export function ReportButton({ apiUrl, canSetUp }: { apiUrl: string; canSetUp: b
             return result
           }}
           onSetCause={(findingId, cause) =>
-            sendCause({ preview, platform, findingId, cause }, { apiUrl })
+            preview
+              ? sendCause({ preview, platform, findingId, cause }, { apiUrl })
+              : Promise.resolve({ ok: false as const, message: 'Not a PR preview.' })
           }
-          onFileIssue={(findingId) => fileIssue({ preview, platform, findingId }, { apiUrl })}
+          onFileIssue={(findingId) =>
+            preview
+              ? fileIssue({ preview, platform, findingId }, { apiUrl })
+              : Promise.resolve({
+                  ok: false as const,
+                  message: 'Not a PR preview.',
+                  openInBrowser: false,
+                })
+          }
           onRequestFix={(findingId) =>
-            requestFix(
-              {
-                preview,
-                platform,
-                findingId,
-                ...(rememberedName ? { reporterName: rememberedName } : {}),
-              },
-              { apiUrl },
-            )
+            !preview
+              ? Promise.resolve({ ok: false as const, message: 'Not a PR preview.' })
+              : requestFix(
+                  {
+                    preview,
+                    platform,
+                    findingId,
+                    ...(rememberedName ? { reporterName: rememberedName } : {}),
+                  },
+                  { apiUrl },
+                )
           }
           onCancel={cancelReport}
           onClose={finishReport}
@@ -850,6 +927,8 @@ type Status =
     }
   | { kind: 'error'; message: string }
   | { kind: 'idea_sent'; idea: Idea; emailed: boolean }
+  /** A staff build's report, filed straight as a GitHub issue. */
+  | { kind: 'filed'; issueNumber: number; issueUrl: string }
 
 function Composer({
   screenshot,
@@ -859,6 +938,8 @@ function Composer({
   hasScenario,
   failedStep,
   kind,
+  staff,
+  onSendStaff,
   onKindChange,
   onSendIdea,
   onViewIdea,
@@ -880,6 +961,14 @@ function Composer({
   failedStep: ChecklistStep | null
   /** A bug report goes to the PR; an idea goes to Claude to write up and build. */
   kind: 'issue' | 'idea'
+  /** A staff build's version label; reports go straight to a GitHub issue. Null on PR builds. */
+  staff: string | null
+  onSendStaff: (input: {
+    body: string
+    reporterName?: string
+    screenshot?: Screenshot
+    annotations?: Annotation[]
+  }) => ReturnType<typeof sendStaffReport>
   onKindChange: (kind: 'issue' | 'idea') => void
   onSendIdea: (draft: IdeaDraft) => ReturnType<typeof submitIdea>
   onViewIdea: (idea: Idea) => void
@@ -933,8 +1022,27 @@ function Composer({
     setStatus({ kind: 'idea_sent', idea: result.idea, emailed: email.trim() !== '' })
   }
 
+  async function sendStaff() {
+    rememberedName = name.trim()
+    setStatus({ kind: 'sending' })
+    const result = await onSendStaff({
+      body: body.trim(),
+      ...(name.trim() ? { reporterName: name.trim() } : {}),
+      ...(withShot && screenshot ? { screenshot, annotations } : {}),
+    })
+    if (!result.ok) {
+      haptics.warning()
+      setStatus({ kind: 'error', message: result.message })
+      return
+    }
+    haptics.success()
+    Keyboard.dismiss()
+    setStatus({ kind: 'filed', issueNumber: result.issueNumber, issueUrl: result.issueUrl })
+  }
+
   async function send() {
     if (idea) return sendIdea()
+    if (staff) return sendStaff()
     rememberedName = name.trim()
     setStatus({ kind: 'sending' })
     const result = await onSend({
@@ -975,10 +1083,16 @@ function Composer({
   return (
     <>
       <Sheet
-        onClose={status.kind === 'sent' || status.kind === 'idea_sent' ? onClose : onCancel}
-        scrim={status.kind === 'sent' || status.kind === 'idea_sent'}
+        onClose={
+          status.kind === 'sent' || status.kind === 'idea_sent' || status.kind === 'filed'
+            ? onClose
+            : onCancel
+        }
+        scrim={status.kind === 'sent' || status.kind === 'idea_sent' || status.kind === 'filed'}
       >
-        {status.kind === 'idea_sent' ? (
+        {status.kind === 'filed' ? (
+          <Filed issueNumber={status.issueNumber} issueUrl={status.issueUrl} onClose={onClose} />
+        ) : status.kind === 'idea_sent' ? (
           <IdeaSent
             emailed={status.emailed}
             onView={() => onViewIdea(status.idea)}
@@ -1007,14 +1121,16 @@ function Composer({
           <>
             <SheetHeader
               title={failedStep ? 'Step Failed' : idea ? 'Share an Idea' : 'Report an Issue'}
-              subtitle={pr ? `PR #${pr}` : undefined}
+              subtitle={staff ?? (pr ? `PR #${pr}` : undefined)}
               left={
                 <CircleButton icon="xmark" label="Cancel" onPress={onCancel} disabled={sending} />
               }
               right={
                 <CircleButton
                   icon="arrow.up"
-                  label={idea ? 'Send idea to Claude' : 'Send to PR'}
+                  label={
+                    idea ? 'Send idea to Claude' : staff ? 'File as a GitHub issue' : 'Send to PR'
+                  }
                   tint
                   onPress={send}
                   disabled={!canSend}
@@ -1158,6 +1274,11 @@ function Composer({
                     test.
                   </Text>
                 </>
+              ) : staff ? (
+                <Text style={[text.footnote, styles.inset, { color: colors.secondary }]}>
+                  Sending opens a GitHub issue with what you wrote, the screenshot, this screen, the
+                  app’s version and recent errors.
+                </Text>
               ) : (
                 <Text style={[text.footnote, styles.inset, { color: colors.secondary }]}>
                   Sending posts this as a comment on {pr ? `PR #${pr}` : 'the PR'}. If it was
@@ -1248,6 +1369,37 @@ function issueStatus(number: number, fix: IssueFix): string {
   if (fix === 'off')
     return `${filed} A developer can add the tapthrough:fix label to have Claude fix it.`
   return `${filed}`
+}
+
+/** After a staff build's report: the issue it became. */
+function Filed({
+  issueNumber,
+  issueUrl,
+  onClose,
+}: {
+  issueNumber: number
+  issueUrl: string
+  onClose: () => void
+}) {
+  const colors = useColors()
+  return (
+    <>
+      <SheetHeader
+        title="Filed"
+        left={<CircleButton icon="xmark" label="Done" onPress={onClose} />}
+      />
+      <View style={[styles.form, styles.ideaSent]}>
+        <View style={[styles.ideaMark, { backgroundColor: colors.tintFill }]}>
+          <Icon name="checkmark" size={22} color={colors.tint} />
+        </View>
+        <Text style={[text.subhead, styles.center, { color: colors.label }]}>
+          Created issue #{issueNumber} with your screenshot and details. The team sees it on GitHub.
+        </Text>
+        <Capsule title="View on GitHub" kind="plain" onPress={() => Linking.openURL(issueUrl)} />
+        <Capsule title="Done" onPress={onClose} />
+      </View>
+    </>
+  )
 }
 
 /** After an idea is sent: what happens next, and where to follow it. */

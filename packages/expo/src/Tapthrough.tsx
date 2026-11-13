@@ -92,8 +92,12 @@ export function Tapthrough({
   return (
     <>
       {children}
-      {isEnabled && feedback ? (
-        <ReportButton apiUrl={apiUrl ?? config.apiUrl} canSetUp={Boolean(hookUrl)} />
+      {(isEnabled || config.staff) && feedback ? (
+        <ReportButton
+          apiUrl={apiUrl ?? config.apiUrl}
+          canSetUp={Boolean(hookUrl)}
+          appKey={config.staff ? config.appKey : undefined}
+        />
       ) : null}
       {isEnabled ? <LaunchOverlay /> : null}
     </>

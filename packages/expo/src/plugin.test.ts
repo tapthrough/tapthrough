@@ -8,6 +8,7 @@ const base = {
   extra: { eas: { projectId: 'p' } },
 }
 const seedHookUrl = 'https://ref.supabase.co/functions/v1/tapthrough-seed'
+const appKey = 'eyJ.example.key'
 
 describe('config plugin', () => {
   it('writes the settings into extra.tapthrough and keeps other extra keys', () => {
@@ -18,13 +19,13 @@ describe('config plugin', () => {
     })
   })
 
-  it('drops the URL when disabled, so store builds carry nothing', () => {
-    const config = withTapthrough(base, { enabled: false, seedHookUrl })
+  it('drops the URLs and key when off, so store builds carry nothing', () => {
+    const config = withTapthrough(base, { enabled: false, seedHookUrl, appKey })
     expect(config.extra?.tapthrough).toEqual({ enabled: false, seedHookUrl: undefined })
   })
 
-  it('requires a seed hook URL and a scheme when enabled', () => {
-    expect(() => withTapthrough(base, {})).toThrow('`seedHookUrl` is required')
+  it('works without a seed hook, and requires a scheme when enabled', () => {
+    expect(() => withTapthrough(base, {})).not.toThrow()
     expect(() => withTapthrough({ ...base, scheme: undefined }, { seedHookUrl })).toThrow(
       'Set `scheme`',
     )
@@ -37,5 +38,17 @@ describe('config plugin', () => {
     for (const url of ['http://staging.acme.com/seed', 'not a url', 'ftp://x/seed']) {
       expect(() => withTapthrough(base, { seedHookUrl: url })).toThrow('must be https')
     }
+  })
+
+  it('writes the app key only for staff builds, and requires one', () => {
+    const config = withTapthrough(base, { enabled: false, staff: true, appKey })
+    expect(config.extra?.tapthrough).toEqual({
+      enabled: false,
+      seedHookUrl: undefined,
+      apiUrl: 'https://tapthrough.dev',
+      staff: true,
+      appKey,
+    })
+    expect(() => withTapthrough(base, { enabled: false, staff: true })).toThrow('needs an `appKey`')
   })
 })

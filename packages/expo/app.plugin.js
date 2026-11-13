@@ -3,32 +3,38 @@
  * Expo config plugin. Writes the SDK's build-time settings into `extra.tapthrough`.
  *
  *   plugins: [['@tapthrough/expo', {
- *     enabled: process.env.APP_VARIANT === 'preview',
+ *     // PR previews: launch links, test data, the checklist.
+ *     enabled: process.env.APP_VARIANT === 'development',
  *     seedHookUrl: 'https://<ref>.supabase.co/functions/v1/tapthrough-seed',
+ *     // Staging and TestFlight builds: report issues and share ideas.
+ *     staff: process.env.APP_VARIANT === 'staging',
+ *     appKey: process.env.TAPTHROUGH_APP_KEY,
  *   }]]
  *
- * Keep `enabled` false for store builds: the SDK ignores launch links unless it's on.
+ * Keep both off for store builds. With `enabled` off the SDK ignores launch
+ * links; with `staff` off there's no feedback button outside PR previews.
  *
  * @param {{ expo?: unknown } & Record<string, any>} config
- * @param {{ enabled?: boolean, seedHookUrl?: string, apiUrl?: string }} [props]
+ * @param {{ enabled?: boolean, seedHookUrl?: string, apiUrl?: string, staff?: boolean, appKey?: string }} [props]
  */
 function withTapthrough(config, props = {}) {
   const enabled = props.enabled ?? true
+  const staff = props.staff === true
   const seedHookUrl = props.seedHookUrl
   const apiUrl = props.apiUrl ?? 'https://tapthrough.dev'
 
-  if (enabled) {
-    if (!seedHookUrl) {
-      throw new Error('[@tapthrough/expo] `seedHookUrl` is required when the plugin is enabled.')
-    }
-    if (!isAllowedUrl(seedHookUrl)) {
-      throw new Error(
-        `[@tapthrough/expo] \`seedHookUrl\` must be https (http is allowed only for localhost): ${seedHookUrl}`,
-      )
-    }
+  if (enabled || staff) {
     if (!isAllowedUrl(apiUrl)) {
       throw new Error(
         `[@tapthrough/expo] \`apiUrl\` must be https (http is allowed only for localhost): ${apiUrl}`,
+      )
+    }
+  }
+  if (enabled) {
+    // Optional: without it, links open the right screen but can't add test data.
+    if (seedHookUrl && !isAllowedUrl(seedHookUrl)) {
+      throw new Error(
+        `[@tapthrough/expo] \`seedHookUrl\` must be https (http is allowed only for localhost): ${seedHookUrl}`,
       )
     }
     if (!config.scheme) {
@@ -37,12 +43,23 @@ function withTapthrough(config, props = {}) {
       )
     }
   }
+  if (staff && !props.appKey) {
+    throw new Error(
+      '[@tapthrough/expo] `staff` needs an `appKey`. Make one with `npx @tapthrough/cli app-key` and pass it from an environment variable.',
+    )
+  }
 
   return {
     ...config,
     extra: {
       ...config.extra,
-      tapthrough: enabled ? { enabled, seedHookUrl, apiUrl } : { enabled, seedHookUrl: undefined },
+      tapthrough: {
+        enabled,
+        seedHookUrl: enabled ? seedHookUrl : undefined,
+        ...(enabled || staff ? { apiUrl } : {}),
+        // The key only goes into builds that use it.
+        ...(staff ? { staff, appKey: props.appKey } : {}),
+      },
     },
   }
 }

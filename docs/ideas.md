@@ -79,5 +79,5 @@ To turn ideas off for a repo: `{ "ideas": { "enabled": false } }`.
 - 10 ideas written up and 5 built per repo per day.
 - Claude never edits `.github/`, `.tapthrough/settings.json`, lockfiles or dependencies. If an idea needs a
   new package, Claude says so instead of building it.
-- Ideas can be sent from Tapthrough builds (PR previews) today. Sending them from your App Store or
-  TestFlight build is coming.
+- Ideas can be sent from PR previews, and from staging and TestFlight builds with an app key: see
+  [Staging and TestFlight builds](staff-builds.md). Store builds never show the button.

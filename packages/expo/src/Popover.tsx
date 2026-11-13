@@ -82,6 +82,11 @@ export interface ReviewPopoverProps {
   onFail: (key: string, index: number) => void
   onRecheck: (item: RecheckItem, result: 'fixed' | 'still_broken') => void
   onReportOther: () => void
+  /**
+   * A staging or TestFlight build, with its version for the header: no PR to
+   * check, so the panel is just feedback and ideas.
+   */
+  staff: string | null
   /** The app's recent ideas, newest first. */
   ideas: Idea[]
   onShareIdea: () => void
@@ -315,8 +320,8 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
     recheck.length ? `${recheck.length} to re-check` : null,
   ].filter(Boolean)
   return {
-    title: `PR #${checklist.pr}`,
-    subtitle: counts.join(' · ') || 'Nothing planned for this PR',
+    title: p.staff ? 'Feedback' : `PR #${checklist.pr}`,
+    subtitle: p.staff ?? (counts.join(' · ') || 'Nothing planned for this PR'),
     body: (
       <>
         {checklist.newerBuild ? <NewerRow build={checklist.newerBuild} colors={colors} /> : null}
@@ -406,16 +411,25 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
             ))}
           </>
         ) : null}
-        <Row
-          colors={colors}
-          lead={<Badge icon="arrow.triangle.branch" colors={colors} />}
-          title="Switch PR"
-          subtitle="Open another pull request’s build"
-          onPress={() => {
-            p.onShowPulls()
-            p.onNav({ view: 'prs' }, 'forward')
-          }}
-        />
+        {p.staff ? (
+          p.ideas.length ? null : (
+            <Text style={[text.subhead, { color: colors.secondary }]}>
+              Something wrong? Report it, and it becomes a GitHub issue with a screenshot. Got an
+              idea? Claude writes it up, and can build it.
+            </Text>
+          )
+        ) : (
+          <Row
+            colors={colors}
+            lead={<Badge icon="arrow.triangle.branch" colors={colors} />}
+            title="Switch PR"
+            subtitle="Open another pull request’s build"
+            onPress={() => {
+              p.onShowPulls()
+              p.onNav({ view: 'prs' }, 'forward')
+            }}
+          />
+        )}
         <ReviewerName name={p.name} onChange={p.onNameChange} colors={colors} />
       </>
     ),
