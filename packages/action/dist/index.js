@@ -19807,6 +19807,19 @@ var Manifest = external_exports.object({
   presets: external_exports.array(PresetSummary)
 });
 var MAX_DIFF_LENGTH = 2e6;
+var NativeBuild = external_exports.object({
+  state: external_exports.enum(["found", "building", "started", "failed", "off"]),
+  builds: external_exports.array(external_exports.object({
+    id: external_exports.string().min(1).max(100),
+    profile: external_exports.string().max(100),
+    /** The build's page on expo.dev: its status, and Install for registered phones. */
+    url: external_exports.string().url().max(500),
+    simulator: external_exports.boolean(),
+    status: external_exports.string().max(40)
+  })).max(4).default([]),
+  /** Why starting a build failed, from EAS. */
+  message: external_exports.string().max(500).optional()
+});
 var RunReport = external_exports.object({
   apiVersion: external_exports.literal(1),
   repo: external_exports.string().regex(/^[\w.-]+\/[\w.-]+$/),
@@ -19818,7 +19831,9 @@ var RunReport = external_exports.object({
   manifest: Manifest,
   diff: external_exports.string().max(MAX_DIFF_LENGTH),
   /** e.g. `#98` or `owner/repo#98`; absent when the PR links no ticket. */
-  ticketRef: external_exports.string().optional()
+  ticketRef: external_exports.string().optional(),
+  /** Absent from older Actions. */
+  nativeBuild: NativeBuild.optional()
 });
 
 // ../cli/dist/imports.js
@@ -20074,6 +20089,136 @@ function expoInfoFromConfig(config2) {
   return { projectId, slug: c.slug, scheme, ...appId ? { appId } : {} };
 }
 
+// src/native.ts
+var RUNNING = /* @__PURE__ */ new Set(["NEW", "IN_QUEUE", "IN_PROGRESS"]);
+function buildPageUrl(build) {
+  const owner = build.app?.ownerAccount?.name;
+  const slug = build.app?.slug;
+  if (!owner || !slug) return null;
+  return `https://expo.dev/accounts/${encodeURIComponent(owner)}/projects/${encodeURIComponent(slug)}/builds/${encodeURIComponent(build.id)}`;
+}
+function parseBuilds(stdout) {
+  const start = stdout.indexOf("[");
+  if (start < 0) return [];
+  try {
+    const parsed = JSON.parse(stdout.slice(start));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function pickBuild(builds) {
+  return builds.find((b) => b.status === "FINISHED") ?? builds.find((b) => RUNNING.has(b.status)) ?? null;
+}
+function toEntry(build, profile) {
+  const url2 = buildPageUrl(build);
+  if (!url2) return null;
+  return {
+    id: build.id,
+    profile: build.buildProfile ?? profile,
+    url: url2,
+    simulator: Boolean(build.isForIosSimulator),
+    status: build.status
+  };
+}
+function easError(error62) {
+  const raw = error62?.stderr?.toString() || (error62 instanceof Error ? error62.message : String(error62));
+  const line = raw.split("\n").map((l) => l.trim()).find((l) => l && !/^(›|»|\s*at\s)/.test(l)) ?? "EAS gave no details.";
+  return line.replace(/[A-Za-z0-9_-]{32,}/g, "***").slice(0, 300);
+}
+function ensureNativeBuild(eas, input3) {
+  if (input3.profiles.length === 0) return { state: "off", builds: [] };
+  const entries = [];
+  let started = false;
+  let building = false;
+  let skipped = false;
+  let message;
+  for (const profile of input3.profiles) {
+    let existing = null;
+    try {
+      existing = pickBuild(
+        parseBuilds(
+          eas([
+            "build:list",
+            "--platform",
+            input3.platform,
+            "--runtime-version",
+            input3.runtimeVersion,
+            "--build-profile",
+            profile,
+            "--limit",
+            "10",
+            "--json",
+            "--non-interactive"
+          ])
+        )
+      );
+    } catch (error62) {
+      message = `Couldn\u2019t list builds: ${easError(error62)}`;
+      continue;
+    }
+    if (existing) {
+      if (existing.status !== "FINISHED") building = true;
+      const entry = toEntry(existing, profile);
+      if (entry) entries.push(entry);
+      continue;
+    }
+    let used = false;
+    try {
+      used = parseBuilds(
+        eas([
+          "build:list",
+          "--platform",
+          input3.platform,
+          "--build-profile",
+          profile,
+          "--limit",
+          "1",
+          "--json",
+          "--non-interactive"
+        ])
+      ).length > 0;
+    } catch {
+      used = false;
+    }
+    if (!used) {
+      skipped = true;
+      continue;
+    }
+    try {
+      const made = parseBuilds(
+        eas([
+          "build",
+          "--profile",
+          profile,
+          "--platform",
+          input3.platform,
+          "--no-wait",
+          "--json",
+          "--non-interactive"
+        ])
+      )[0];
+      if (!made) throw new Error("EAS started no build.");
+      started = true;
+      const entry = toEntry(made, profile);
+      if (entry) entries.push(entry);
+    } catch (error62) {
+      message = `Couldn\u2019t start a ${profile} build: ${easError(error62)}`;
+    }
+  }
+  const state = started ? "started" : building ? "building" : entries.length > 0 ? "found" : skipped && !message ? "off" : "failed";
+  return { state, builds: entries, ...message ? { message } : {} };
+}
+function parseProfiles(value) {
+  const trimmed = value.trim();
+  if (trimmed === "" || trimmed.toLowerCase() === "off") return [];
+  return [
+    ...new Set(
+      trimmed.split(",").map((p) => p.trim()).filter((p) => /^[\w.-]+$/.test(p))
+    )
+  ].slice(0, 2);
+}
+
 // src/index.ts
 function input2(name) {
   return (process.env[`INPUT_${name.toUpperCase()}`] ?? "").trim();
@@ -20176,9 +20321,30 @@ async function main() {
   console.log(
     `Found ${manifest.routes.length} routes; ${manifest.affected.length} changed directly.`
   );
+  const profiles = parseProfiles(input2("native-build-profile") || "development");
+  const eas = (args) => execFileSync("eas", args, {
+    cwd: workingDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 16 * 1024 * 1024
+  });
   const token = await oidcToken(apiUrl);
   const links = /* @__PURE__ */ new Map();
   for (const update of updates) {
+    const nativeBuild = ensureNativeBuild(eas, {
+      platform: update.platform,
+      runtimeVersion: update.runtimeVersion,
+      profiles
+    });
+    const said = {
+      found: "a development build can run it",
+      building: "its development build is still building on EAS",
+      started: "it changes native code, so a development build was started on EAS",
+      failed: `no development build can run it. ${nativeBuild.message ?? ""}`,
+      off: "not checked (native-build-profile: off)"
+    }[nativeBuild.state];
+    console.log(`${update.platform}: ${said}`);
+    if (nativeBuild.state === "failed") console.log(`::warning::${update.platform}: ${said}`);
     const report = {
       apiVersion: 1,
       repo,
@@ -20189,7 +20355,8 @@ async function main() {
       updateGroupId: update.updateGroupId,
       manifest,
       diff,
-      expo
+      expo,
+      nativeBuild
     };
     const response = await fetch(`${apiUrl}/api/v1/runs`, {
       method: "POST",

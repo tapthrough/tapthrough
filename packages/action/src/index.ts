@@ -10,6 +10,7 @@ import {
 import { MAX_DIFF_LENGTH, type Manifest, type RunReport } from '@tapthrough/protocol'
 import { parseEasUpdateJson } from './eas.js'
 import { type ExpoInfo, expoInfoFromConfig } from './expo-config.js'
+import { ensureNativeBuild, parseProfiles } from './native.js'
 
 function input(name: string): string {
   return (process.env[`INPUT_${name.toUpperCase()}`] ?? '').trim()
@@ -148,9 +149,32 @@ async function main() {
     `Found ${manifest.routes.length} routes; ${manifest.affected.length} changed directly.`,
   )
 
+  const profiles = parseProfiles(input('native-build-profile') || 'development')
+  const eas = (args: string[]) =>
+    execFileSync('eas', args, {
+      cwd: workingDir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 16 * 1024 * 1024,
+    })
+
   const token = await oidcToken(apiUrl)
   const links = new Map<string, string>()
   for (const update of updates) {
+    const nativeBuild = ensureNativeBuild(eas, {
+      platform: update.platform,
+      runtimeVersion: update.runtimeVersion,
+      profiles,
+    })
+    const said = {
+      found: 'a development build can run it',
+      building: 'its development build is still building on EAS',
+      started: 'it changes native code, so a development build was started on EAS',
+      failed: `no development build can run it. ${nativeBuild.message ?? ''}`,
+      off: 'not checked (native-build-profile: off)',
+    }[nativeBuild.state]
+    console.log(`${update.platform}: ${said}`)
+    if (nativeBuild.state === 'failed') console.log(`::warning::${update.platform}: ${said}`)
     const report: RunReport & { expo: ExpoInfo } = {
       apiVersion: 1,
       repo,
@@ -162,6 +186,7 @@ async function main() {
       manifest,
       diff,
       expo,
+      nativeBuild,
     }
     const response = await fetch(`${apiUrl}/api/v1/runs`, {
       method: 'POST',
