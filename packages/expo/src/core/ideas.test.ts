@@ -7,6 +7,7 @@ import {
   ideaAction,
   ideasNeedingYou,
   isMoving,
+  newlyWaiting,
   sendStaffReport,
   stepTime,
   submitIdea,
@@ -104,6 +105,18 @@ describe('ideaAction', () => {
     expect(result).toEqual({ ok: true, idea, approve: 'auto_merge' })
     expect(approveMessage('auto_merge')).toBe('Approved. It merges once its checks pass.')
     expect(approveMessage(null)).toBe('Approved. An engineer reviews and merges it.')
+  })
+})
+
+describe('newlyWaiting', () => {
+  it('announces each idea once per round of questions', () => {
+    const seen = new Set<string>()
+    const asking = { ...idea, id: 'a', status: 'needs_answers' as const, questions: ['Draft?'] }
+    const moving = { ...idea, id: 'b', status: 'building' as const }
+    expect(newlyWaiting([moving, asking], seen)?.id).toBe('a')
+    expect(newlyWaiting([moving, asking], seen)).toBeNull()
+    expect(newlyWaiting([{ ...asking, questions: ['Which salary range?'] }], seen)?.id).toBe('a')
+    expect(newlyWaiting([{ ...asking, status: 'ready_to_test' as const }], seen)?.id).toBe('a')
   })
 })
 

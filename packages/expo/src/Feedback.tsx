@@ -24,6 +24,7 @@ import type { Annotation } from './core/annotations.js'
 import { defaultPosition, type Point } from './core/bubble.js'
 import { createDiagnostics, installDiagnostics } from './core/diagnostics.js'
 import {
+  buttonBadge,
   type Checklist,
   type ChecklistStep,
   failedStepBody,
@@ -35,7 +36,6 @@ import {
   type RecheckItem,
   requestFix,
   requestLaunch,
-  reviewBadge,
   sendCause,
   sendFeedback,
   sendRecheck,
@@ -53,6 +53,7 @@ import {
   ideaAction,
   ideasNeedingYou,
   isMoving,
+  newlyWaiting,
   type OpenPr,
   sendStaffReport,
   submitIdea,
@@ -180,6 +181,10 @@ const IDEA_REFRESH_MS = 8_000
 
 /** Update groups the reviewer has already been told about, so the toast shows once. */
 const announcedBuilds = new Set<string>()
+/** Ideas (and which round of questions) the reviewer has already been told about. */
+const announcedIdeas = new Set<string>()
+
+type Toast = { kind: 'build'; build: NewerBuild } | { kind: 'idea'; idea: Idea }
 
 type Phase = 'idle' | 'loading' | 'open' | 'capturing' | 'composing'
 
@@ -223,7 +228,7 @@ export function ReportButton({
   const [name, setName] = useState(rememberedName)
   const [failing, setFailing] = useState<FailingStep | null>(null)
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null)
-  const [toast, setToast] = useState<NewerBuild | null>(null)
+  const [toast, setToast] = useState<Toast | null>(null)
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [ideaBusy, setIdeaBusy] = useState<string | null>(null)
   const [pulls, setPulls] = useState<OpenPr[] | null>(null)
@@ -262,10 +267,14 @@ export function ReportButton({
     ])
     if (list) setChecklist(list)
     setIdeas(recent)
+    const waiting = newlyWaiting(recent, announcedIdeas)
     const newer = list?.newerBuild
     if (newer && !announcedBuilds.has(newer.updateGroupId)) {
       announcedBuilds.add(newer.updateGroupId)
-      setToast(newer)
+      setToast({ kind: 'build', build: newer })
+    } else if (waiting) {
+      haptics.light()
+      setToast({ kind: 'idea', idea: waiting })
     }
     return list
   }
@@ -473,6 +482,15 @@ export function ReportButton({
     }
   }
 
+  /** From the idea banner: open the popover on that idea. */
+  function openIdea(id: string) {
+    setToast(null)
+    dismissKeyboard()
+    go({ view: 'idea', id })
+    setPhase('open')
+    void refresh()
+  }
+
   function close() {
     setPhase('idle')
     setFull(false)
@@ -600,7 +618,11 @@ export function ReportButton({
   return (
     <Overlay>
       {toast && phase !== 'open' && phase !== 'composing' && phase !== 'capturing' ? (
-        <NewBuildToast build={toast} onPress={toggle} />
+        toast.kind === 'build' ? (
+          <NewBuildToast build={toast.build} onPress={toggle} />
+        ) : (
+          <IdeaToast idea={toast.idea} onPress={() => openIdea(toast.idea.id)} />
+        )
       ) : null}
       {phase === 'open' && checklist ? (
         <ReviewPopover
@@ -653,7 +675,7 @@ export function ReportButton({
       {showButton ? (
         <Bubble
           onPress={toggle}
-          badge={reviewBadge(checklist) ?? (ideasNeedingYou(ideas) ? { kind: 'idea' } : null)}
+          badge={buttonBadge(checklist, ideasNeedingYou(ideas))}
           busy={phase === 'loading'}
           active={phase === 'open'}
           onRest={setAnchor}
@@ -908,6 +930,38 @@ function NewBuildToast({ build, onPress }: { build: NewerBuild; onPress: () => v
           <Text style={[text.subhead, styles.strong, { color: colors.label }]}>
             {build.hasFix ? 'Claude’s fix is ready to test' : 'A new build is ready'}
           </Text>
+          <Text style={[text.subhead, styles.strong, { color: colors.tint }]}>View</Text>
+        </Surface>
+      </Pressable>
+    </View>
+  )
+}
+
+/** "Claude has 3 questions" for a moment at the top; the bubble's count stays after. */
+function IdeaToast({ idea, onPress }: { idea: Idea; onPress: () => void }) {
+  const colors = useColors()
+  const name = idea.title ?? idea.body.split(/\r?\n/)[0] ?? ''
+  return (
+    <View style={styles.toastWrap} pointerEvents="box-none">
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [pressed && styles.pressed]}
+        accessibilityRole="button"
+        accessibilityLiveRegion="polite"
+        accessibilityLabel={`${idea.statusLine}: ${name}. View`}
+      >
+        <Surface radius={24} style={[styles.toast, styles.ideaToast]}>
+          <View style={[styles.toastDot, { backgroundColor: COLORS.idea }]} />
+          <View style={styles.toastText}>
+            <Text style={[text.subhead, styles.strong, { color: colors.label }]} numberOfLines={1}>
+              {idea.statusLine}
+            </Text>
+            {name ? (
+              <Text style={[text.footnote, { color: colors.secondary }]} numberOfLines={1}>
+                {name}
+              </Text>
+            ) : null}
+          </View>
           <Text style={[text.subhead, styles.strong, { color: colors.tint }]}>View</Text>
         </Surface>
       </Pressable>
@@ -1736,4 +1790,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   toastDot: { width: 8, height: 8, borderRadius: 4 },
+  ideaToast: { maxWidth: 360, marginHorizontal: 16 },
+  toastText: { flexShrink: 1 },
 })

@@ -292,8 +292,8 @@ export type Badge =
   | { kind: 'failed' }
   | { kind: 'remaining'; count: number }
   | { kind: 'done' }
-  /** Nothing to check here, but an idea waits on someone: questions, or a build to test. */
-  | { kind: 'idea' }
+  /** Ideas waiting on someone: questions to answer, or a build to test. */
+  | { kind: 'idea'; count: number }
 
 /** What the floating Review button shows: a new build wins, then failures, then steps left. */
 export function reviewBadge(checklist: Checklist | null): Badge | null {
@@ -304,6 +304,17 @@ export function reviewBadge(checklist: Checklist | null): Badge | null {
   if (progress.failed) return { kind: 'failed' }
   const count = progress.total - progress.passed
   return count === 0 ? { kind: 'done' } : { kind: 'remaining', count }
+}
+
+/**
+ * The button's badge with ideas counted in. An idea waiting on someone blocks
+ * Claude, so it outranks steps left; only a new build or a failed step wins.
+ */
+export function buttonBadge(checklist: Checklist | null, ideasWaiting: number): Badge | null {
+  const review = reviewBadge(checklist)
+  if (review?.kind === 'new-build' || review?.kind === 'failed') return review
+  if (ideasWaiting > 0) return { kind: 'idea', count: ideasWaiting }
+  return review
 }
 
 /** Marks an earlier report fixed or still broken on this build. Never throws. */

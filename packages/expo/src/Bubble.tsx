@@ -224,7 +224,9 @@ function accessibilityLabel(badge: Badge | null) {
     case 'done':
       return 'Review this pull request. Every step passed.'
     case 'idea':
-      return 'Review. An idea needs you.'
+      return badge.count === 1
+        ? 'Review. An idea needs you.'
+        : `Review. ${badge.count} ideas need you.`
     default:
       return 'Review this pull request'
   }
@@ -243,8 +245,13 @@ function Mark() {
 function BadgeView({ badge }: { badge: Badge }) {
   switch (badge.kind) {
     case 'new-build':
-    case 'idea':
       return <View style={[styles.badge, styles.dot, { backgroundColor: COLORS.tape }]} />
+    case 'idea':
+      return (
+        <View style={[styles.badge, styles.ideaBadge, { backgroundColor: COLORS.idea }]}>
+          <Text style={styles.badgeText}>{badge.count > 9 ? '9+' : badge.count}</Text>
+        </View>
+      )
     case 'failed':
       return (
         <View style={[styles.badge, { backgroundColor: COLORS.fail }]}>
@@ -274,6 +281,8 @@ export const COLORS = {
   count: '#0A84FF',
   pass: '#30D158',
   fail: '#FF453A',
+  /** An idea waiting on you: the iOS system orange, apart from the yellow tape. */
+  idea: '#FF9F0A',
 }
 
 const styles = StyleSheet.create({
@@ -327,5 +336,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dot: { minWidth: 14, width: 14, height: 14, paddingHorizontal: 0, top: -1, right: -1 },
+  /** A white ring so it reads against the button and any screen behind it. */
+  ideaBadge: { borderWidth: 2, borderColor: '#ffffff', minWidth: 20, height: 20, borderRadius: 10 },
   badgeText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
 })

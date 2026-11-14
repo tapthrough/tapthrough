@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  buttonBadge,
   checklistProgress,
   failedStepBody,
   fetchChecklist,
@@ -403,6 +404,21 @@ describe('checklist progress and badge', () => {
     })
     expect(reviewBadge(checklist([step(0, 'pass')]))).toEqual({ kind: 'done' })
     expect(reviewBadge(checklist([]))).toBeNull()
+  })
+
+  it('puts ideas waiting on you ahead of steps left, but not new builds or failures', () => {
+    const newer = { sha: 'def', updateGroupId: 'g2', openUrl: null, hasFix: false }
+    expect(buttonBadge(checklist([step(0, 'pass'), step(1)]), 2)).toEqual({
+      kind: 'idea',
+      count: 2,
+    })
+    expect(buttonBadge(checklist([]), 1)).toEqual({ kind: 'idea', count: 1 })
+    expect(buttonBadge(null, 1)).toEqual({ kind: 'idea', count: 1 })
+    expect(buttonBadge(checklist([step(0, 'fail')]), 3)).toEqual({ kind: 'failed' })
+    expect(buttonBadge(checklist([step(0)], { newerBuild: newer }), 3)).toEqual({
+      kind: 'new-build',
+    })
+    expect(buttonBadge(checklist([step(0, 'pass')]), 0)).toEqual({ kind: 'done' })
   })
 
   it('opens the sheet for a newer build even without steps', () => {

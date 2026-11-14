@@ -259,10 +259,28 @@ export function ideaAction(
   )
 }
 
+const WAITING: IdeaStatus[] = ['needs_answers', 'ready_to_test']
+
 /** Ideas waiting on a person: questions to answer, or a build to test. */
 export function ideasNeedingYou(ideas: Idea[]): number {
-  return ideas.filter((idea) => idea.status === 'needs_answers' || idea.status === 'ready_to_test')
-    .length
+  return ideas.filter((idea) => WAITING.includes(idea.status)).length
+}
+
+/**
+ * The first idea that started waiting on someone since we last looked, to
+ * announce once. `seen` holds `id:status` pairs already announced; it's
+ * updated in place, so a new round of questions announces again.
+ */
+export function newlyWaiting(ideas: Idea[], seen: Set<string>): Idea | null {
+  let first: Idea | null = null
+  for (const idea of ideas) {
+    if (!WAITING.includes(idea.status)) continue
+    const key = `${idea.id}:${idea.status}:${idea.questions.join('\n')}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    first ??= idea
+  }
+  return first
 }
 
 /** What Approve did, in plain words. */
