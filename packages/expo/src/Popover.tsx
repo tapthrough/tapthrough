@@ -321,8 +321,13 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
     recheck.length ? `${recheck.length} to re-check` : null,
   ].filter(Boolean)
   return {
-    title: p.staff ? 'Feedback' : `PR #${checklist.pr}`,
-    subtitle: p.staff ?? (counts.join(' · ') || 'Nothing planned for this PR'),
+    // Say plainly which build this is: a PR's code, or the installed staging/TestFlight build.
+    title: p.staff ?? `PR #${checklist.pr}`,
+    subtitle: p.staff
+      ? 'Not a PR build · send feedback and ideas'
+      : [checklist.sha ? checklist.sha.slice(0, 7) : null, counts.join(' · ') || 'Nothing planned']
+          .filter(Boolean)
+          .join(' · '),
     body: (
       <>
         {checklist.newerBuild ? <NewerRow build={checklist.newerBuild} colors={colors} /> : null}
@@ -461,6 +466,15 @@ function ideaView(p: ReviewPopoverProps, idea: Idea, colors: Colors): Screen {
     footer = (
       <Capsule title="Build It" busy={busy} onPress={() => p.onIdeaAction(idea.id, 'build')} />
     )
+  } else if (idea.actions.includes('approve') && p.staff) {
+    // A staging or TestFlight build can't load a PR's code; that takes the development build.
+    footer = idea.previewUrl ? (
+      <Capsule
+        title={`Open PR #${idea.prNumber} Page`}
+        kind="plain"
+        onPress={() => Linking.openURL(idea.previewUrl as string)}
+      />
+    ) : null
   } else if (idea.actions.includes('approve')) {
     footer = here ? (
       <Capsule title="Approve" busy={busy} onPress={() => p.onIdeaAction(idea.id, 'approve')} />
@@ -552,9 +566,11 @@ function ideaView(p: ReviewPopoverProps, idea: Idea, colors: Colors): Screen {
         ) : null}
         {idea.actions.includes('approve') ? (
           <Text style={[text.footnote, { color: colors.secondary }]}>
-            {here
-              ? 'You’re on this idea’s build. Try the steps; if it’s right, approve it.'
-              : 'Open its build, try the steps, then approve it from there.'}
+            {p.staff
+              ? `You’re on ${p.staff}, not a PR build, so PR #${idea.prNumber} can’t open here. Open it on a phone with the development build, or in a simulator from the PR’s page. Approve it from there.`
+              : here
+                ? 'You’re on this idea’s build. Try the steps; if it’s right, approve it.'
+                : 'Open its build, try the steps, then approve it from there.'}
           </Text>
         ) : null}
         <LinkRow
