@@ -55,9 +55,9 @@ function toEntry(build: EasBuild, profile: string): NativeBuild['builds'][number
 
 /** EAS's progress notes, never the reason a build failed. */
 const EAS_INFO =
-  /^(Resolved ".*" environment|Learn more|Environment variables|Using remote|Loaded "env"|No environment variables|Build details|Waiting for|✔|- )/i
+  /^(Distribution Certificate is not validated|Resolved ".*" environment|Learn more|Environment variables|Using remote|Loaded "env"|No environment variables|Build details|Waiting for|✔|- )/i
 const EAS_PROBLEM =
-  /error|fail|missing|invalid|cannot|can['’]t|unable|denied|must|expired|\bnot\b|requires?|limit/i
+  /used its .*builds|error|fail|missing|invalid|cannot|can['’]t|unable|denied|must|expired|\bnot\b|requires?|limit/i
 /** EAS's last word on any failure; only shown when there's nothing more specific. */
 const EAS_GENERIC = /^Error:\s*(\w+ )?command failed\.?$|^Error:?$/i
 
@@ -79,8 +79,11 @@ export function easError(error: unknown): string {
 
 /** What to do about the EAS errors teams hit most, after the reason. */
 export function easHint(reason: string, platform: 'ios' | 'android', profile: string): string {
-  // A device was registered since the last build, so the ad hoc profile needs Apple to re-sign it.
-  if (/not validated for non-interactive|provisioning profile/i.test(reason)) {
+  if (/used its .*builds/i.test(reason)) {
+    return ` Upgrade the Expo plan, or make this build on a Mac with \`eas build --platform ${platform} --profile ${profile} --local\`.`
+  }
+  // New devices since the last build: the ad hoc profile needs Apple to re-sign it.
+  if (/provisioning profile/i.test(reason)) {
     return ` Run \`eas build --platform ${platform} --profile ${profile}\` once on your computer (it signs in to Apple and updates the profile), then push again.`
   }
   return ''

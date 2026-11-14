@@ -20121,8 +20121,8 @@ function toEntry(build, profile) {
     status: build.status
   };
 }
-var EAS_INFO = /^(Resolved ".*" environment|Learn more|Environment variables|Using remote|Loaded "env"|No environment variables|Build details|Waiting for|✔|- )/i;
-var EAS_PROBLEM = /error|fail|missing|invalid|cannot|can['’]t|unable|denied|must|expired|\bnot\b|requires?|limit/i;
+var EAS_INFO = /^(Distribution Certificate is not validated|Resolved ".*" environment|Learn more|Environment variables|Using remote|Loaded "env"|No environment variables|Build details|Waiting for|✔|- )/i;
+var EAS_PROBLEM = /used its .*builds|error|fail|missing|invalid|cannot|can['’]t|unable|denied|must|expired|\bnot\b|requires?|limit/i;
 var EAS_GENERIC = /^Error:\s*(\w+ )?command failed\.?$|^Error:?$/i;
 function easError(error62) {
   const raw = error62?.stderr?.toString() || (error62 instanceof Error ? error62.message : String(error62));
@@ -20132,7 +20132,10 @@ function easError(error62) {
   return line.replace(/[A-Za-z0-9_-]{32,}/g, "***").slice(0, 300);
 }
 function easHint(reason, platform, profile) {
-  if (/not validated for non-interactive|provisioning profile/i.test(reason)) {
+  if (/used its .*builds/i.test(reason)) {
+    return ` Upgrade the Expo plan, or make this build on a Mac with \`eas build --platform ${platform} --profile ${profile} --local\`.`;
+  }
+  if (/provisioning profile/i.test(reason)) {
     return ` Run \`eas build --platform ${platform} --profile ${profile}\` once on your computer (it signs in to Apple and updates the profile), then push again.`;
   }
   return "";

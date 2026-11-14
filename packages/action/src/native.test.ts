@@ -145,25 +145,21 @@ describe('native builds for a PR', () => {
     expect(easError(new Error('token ghs_abcdefghijklmnopqrstuvwxyz0123456789 bad'))).toBe(
       'token *** bad',
     )
-    // EAS prints notes first; the reason comes later.
+    // EAS prints notes (and a certificate warning) first; the reason comes later.
+    const quota =
+      'This account has used its iOS builds from the Free plan this month, which will reset in 16 days (on Tue Dec 01 2026). Upgrade your plan for more builds.'
     expect(
       easError({
         stderr: [
           'Resolved "development" environment for the build. Learn more: https://docs.expo.dev/eas/environment-variables/#environments',
-          'No environment variables with visibility "Plain text" and "Sensitive" found for the "development" environment on EAS.',
-          '',
-          '\u001b[31mDistribution Certificate is not validated for non-interactive builds.\u001b[39m',
+          '\u001b[33mDistribution Certificate is not validated for non-interactive builds.\u001b[39m',
+          'All credentials are ready to build @acme/app (com.acme.app)',
+          quota,
           '    Error: build command failed.',
         ].join('\n'),
       }),
-    ).toBe('Distribution Certificate is not validated for non-interactive builds.')
-    expect(
-      easHint(
-        'Distribution Certificate is not validated for non-interactive builds.',
-        'ios',
-        'development',
-      ),
-    ).toContain('`eas build --platform ios --profile development` once on your computer')
+    ).toBe(quota)
+    expect(easHint(quota, 'ios', 'development')).toContain('--local')
     expect(easHint('Something else', 'ios', 'development')).toBe('')
   })
 })
