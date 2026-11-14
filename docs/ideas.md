@@ -60,6 +60,13 @@ the idea.
 The GitHub issue has the spec, the open questions, the test steps and the earlier answers, so engineers
 can follow along there. The PR closes the issue when it merges.
 
+## When checks fail
+
+If your repo's checks (typecheck, lint, tests) fail on the PR Claude built, Claude gets the errors and
+fixes them on the same branch, then the PR gets a new build to test. It tries at most twice per idea, and
+only on commits it pushed: once someone pushes their own commit, the PR is theirs. Each attempt is
+noted on the PR.
+
 ## Approve and merge
 
 **Approve** labels the PR `tapthrough:approved` and comments who approved it. By default an engineer still
