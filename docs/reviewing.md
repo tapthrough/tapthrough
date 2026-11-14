@@ -20,7 +20,8 @@ If the PR has scenarios, the page shows them as tabs. Pick one to see its test p
 
 In the app, tap the round **Review** button on the right edge. If it's in the way, drag it anywhere; it
 snaps to the nearer side and stays there for the session. It fades while you test, and its badge shows how
-many steps are left, a check when they've all passed, or **!** when one failed.
+many steps are left, a check when they've all passed, or **!** when one failed. An orange count means
+ideas are waiting on you.
 
 The button opens a panel over the app with what this PR needs checked. Tap the expand
 button to fill the screen. Tap the Review button again (now an ✕) to close it.

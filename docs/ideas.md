@@ -43,8 +43,10 @@ toggle at the top to **Idea**.
 
 ## Follow it
 
-Ideas show under **Ideas** in the Review panel, newest first, for everyone testing the app. A dot on the
-Review button means one is waiting on someone.
+Ideas show under **Ideas** in the Review panel, newest first, for everyone testing the app. When one is
+waiting on someone (Claude has questions, or a build is ready to test), a banner says so at the top of the
+screen once, and the Review button shows an orange count until it's handled. Tap the banner to go straight to
+the idea.
 
 | Status | What to do |
 | --- | --- |
