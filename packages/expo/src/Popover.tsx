@@ -484,6 +484,7 @@ function ideaView(p: ReviewPopoverProps, idea: Idea, colors: Colors): Screen {
         onPress={() => {
           const pr = p.pulls?.find((pull) => pull.number === idea.prNumber)
           if (pr?.openUrl) p.onSwitchPr(pr)
+          else if (pr?.pageUrl) Linking.openURL(pr.pageUrl)
           else if (idea.previewUrl) Linking.openURL(idea.previewUrl)
         }}
       />
@@ -814,7 +815,9 @@ function prsView(p: ReviewPopoverProps, colors: Colors): Screen {
             pr.current
               ? 'Open now'
               : pr.needsNewBuild
-                ? 'Changes native code: needs a new build of this app'
+                ? pr.pageUrl
+                  ? 'Changes native code: tap to install its build'
+                  : 'Changes native code: needs a new build of this app'
                 : [pr.fromIdea ? 'From an idea' : null, pr.author, pr.draft ? 'Draft' : null]
                     .filter(Boolean)
                     .join(' · ') || 'Open its build'
@@ -822,6 +825,8 @@ function prsView(p: ReviewPopoverProps, colors: Colors): Screen {
           onPress={() => {
             if (pr.current) p.onNav({ view: 'list' }, 'back')
             else if (pr.openUrl) p.onSwitchPr(pr)
+            // This app can't load it: its page has the PR's own build to install first.
+            else if (pr.pageUrl) Linking.openURL(pr.pageUrl)
           }}
         />
       ))

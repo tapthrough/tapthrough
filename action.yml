@@ -15,6 +15,13 @@ inputs:
   working-directory:
     description: The Expo app's directory
     default: .
+  native-build-profile:
+    description: >-
+      EAS build profile for PRs that change native code. When no build exists for a PR's
+      runtime version, the Action starts one (it runs on your EAS plan) and the PR's link
+      shows it. Up to two, comma-separated (e.g. `development, development-simulator`),
+      or `off`.
+    default: development
 
 outputs:
   links:

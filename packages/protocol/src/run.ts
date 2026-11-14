@@ -45,6 +45,32 @@ export type Manifest = z.infer<typeof Manifest>
 
 export const MAX_DIFF_LENGTH = 2_000_000
 
+/**
+ * Whether a development build can run this PR's code. A PR that changes native
+ * code has a new runtime version, and only a build made for that runtime can
+ * load it. `found`: one exists. `building`: one is underway. `started`: this
+ * push started one. `failed`: none, and starting one failed. `off`: not checked.
+ */
+export const NativeBuild = z.object({
+  state: z.enum(['found', 'building', 'started', 'failed', 'off']),
+  builds: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(100),
+        profile: z.string().max(100),
+        /** The build's page on expo.dev: its status, and Install for registered phones. */
+        url: z.string().url().max(500),
+        simulator: z.boolean(),
+        status: z.string().max(40),
+      }),
+    )
+    .max(4)
+    .default([]),
+  /** Why starting a build failed, from EAS. */
+  message: z.string().max(500).optional(),
+})
+export type NativeBuild = z.infer<typeof NativeBuild>
+
 /** Body of `POST /api/v1/runs`, sent by the Action once per push. */
 export const RunReport = z.object({
   apiVersion: z.literal(1),
@@ -58,5 +84,7 @@ export const RunReport = z.object({
   diff: z.string().max(MAX_DIFF_LENGTH),
   /** e.g. `#98` or `owner/repo#98`; absent when the PR links no ticket. */
   ticketRef: z.string().optional(),
+  /** Absent from older Actions. */
+  nativeBuild: NativeBuild.optional(),
 })
 export type RunReport = z.infer<typeof RunReport>

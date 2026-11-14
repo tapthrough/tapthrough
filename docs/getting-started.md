@@ -214,6 +214,21 @@ Use `pull_request`, **never `pull_request_target`**. That trigger would run a fo
 Open a PR. In about two minutes the Tapthrough comment appears with a link and QR code that open the PR's
 code.
 
+### PRs that change native code
+
+A PR that adds a native package or changes native config has a new runtime version, and older
+development builds can't load it. The Action handles this: it looks on EAS for a development build made
+for the PR's runtime. Usually one exists and nothing happens. When none does, it starts one on your EAS
+plan (`eas build --profile development --no-wait`), and the PR's comment and link page tell reviewers to
+install that build first, with its status and an Install link. Later pushes reuse it.
+
+- It only builds a platform and profile you've built before, so it never starts your first Android
+  build by surprise.
+- Your `EXPO_TOKEN` needs to be allowed to start builds (a robot token with the Developer role is), and the
+  profile must build without prompts. For iPhones, that means the devices are already registered.
+- Choose the profile with `native-build-profile` (up to two, like `development, development-simulator`),
+  or set it to `off`.
+
 ## 5. Land reviewers on the right screen (optional)
 
 Without more setup, links open your app's first screen with the PR's code. To open a specific screen with

@@ -62,6 +62,8 @@ export interface OpenPr {
   draft: boolean
   current: boolean
   openUrl: string | null
+  /** The PR's Tapthrough page, for installing its build when this app can't open it. Older servers omit it. */
+  pageUrl?: string | null
   needsNewBuild: boolean
   fromIdea: boolean
   updatedAt: string
