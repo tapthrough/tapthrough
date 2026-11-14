@@ -15,7 +15,7 @@ export type IdeaStatus =
   | 'failed'
   | 'not_set_up'
 
-export type IdeaAction = 'answer' | 'build' | 'approve' | 'retry'
+export type IdeaAction = 'answer' | 'build' | 'approve' | 'retry' | 'reply'
 
 /** One step from sent to merged: done, in progress, not reached yet, or where it stopped. */
 export interface IdeaStage {
@@ -219,6 +219,26 @@ export function answerIdea(
       body: {
         ...credential(input.caller, input.platform),
         answers: input.answers,
+        ...(input.by ? { by: input.by } : {}),
+      },
+    },
+    pickIdea,
+  )
+}
+
+/** After Claude stopped: tell it how to go on, and it writes the idea up again. Never throws. */
+export function replyToIdea(
+  input: { caller: Caller; platform: Platform; id: string; reply: string; by?: string },
+  options: Options,
+) {
+  return call(
+    options,
+    `/api/v1/ideas/${encodeURIComponent(input.id)}/reply`,
+    {
+      method: 'POST',
+      body: {
+        ...credential(input.caller, input.platform),
+        reply: input.reply,
         ...(input.by ? { by: input.by } : {}),
       },
     },

@@ -91,6 +91,7 @@ export interface ReviewPopoverProps {
   ideas: Idea[]
   onShareIdea: () => void
   onAnswerIdea: (id: string, answers: string[]) => void
+  onReplyIdea: (id: string, reply: string) => void
   onIdeaAction: (id: string, action: 'build' | 'retry' | 'approve') => void
   /** The idea whose request is in flight, to show a spinner on its button. */
   ideaBusy: string | null
@@ -533,7 +534,15 @@ function ideaView(p: ReviewPopoverProps, idea: Idea, colors: Colors): Screen {
             colors={colors}
           />
         ) : null}
-        {idea.steps.length && idea.status !== 'needs_answers' ? (
+        {idea.actions.includes('reply') ? (
+          <IdeaReply
+            key={idea.id}
+            busy={busy}
+            onSend={(reply) => p.onReplyIdea(idea.id, reply)}
+            colors={colors}
+          />
+        ) : null}
+        {idea.steps.length && idea.status !== 'needs_answers' && idea.status !== 'declined' ? (
           <Section title="How to test it" colors={colors}>
             <Numbered
               items={idea.steps.map((s) => ({ title: s.action, detail: s.expect }))}
@@ -710,6 +719,51 @@ function IdeaAnswers({
         busy={busy}
         disabled={!ready}
         onPress={() => onSend(answers.map((a) => a.trim()))}
+      />
+    </View>
+  )
+}
+
+/** After Claude stopped: one field to say how to go on, e.g. a smaller first version. */
+function IdeaReply({
+  busy,
+  onSend,
+  colors,
+}: {
+  busy: boolean
+  onSend: (reply: string) => void
+  colors: Colors
+}) {
+  const [reply, setReply] = useState('')
+  return (
+    <View style={styles.sectionBlock}>
+      <View style={styles.question}>
+        <Text style={[text.subhead, styles.rowTitle, { color: colors.label }]}>
+          Tell Claude how to go on
+        </Text>
+        <Text style={[text.footnote, { color: colors.secondary }]}>
+          For example, a smaller first version it can build now. Claude writes it up again for you
+          to check before building.
+        </Text>
+        <TextInput
+          value={reply}
+          onChangeText={setReply}
+          placeholder="Your reply"
+          placeholderTextColor={colors.secondary}
+          multiline
+          style={[
+            text.subhead,
+            styles.nameInput,
+            { color: colors.label, backgroundColor: colors.fill },
+          ]}
+          accessibilityLabel="Tell Claude how to go on"
+        />
+      </View>
+      <Capsule
+        title="Send to Claude"
+        busy={busy}
+        disabled={reply.trim() === ''}
+        onPress={() => onSend(reply.trim())}
       />
     </View>
   )

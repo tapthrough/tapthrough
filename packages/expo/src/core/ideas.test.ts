@@ -8,6 +8,7 @@ import {
   ideasNeedingYou,
   isMoving,
   newlyWaiting,
+  replyToIdea,
   sendStaffReport,
   stepTime,
   submitIdea,
@@ -93,6 +94,20 @@ describe('lists', () => {
       '/api/v1/pulls?updateGroupId=g1&projectId=p1&platform=android',
     )
     expect(await fetchOpenPrs(preview, 'ios', { apiUrl, fetch: respond(404, {}) })).toBeNull()
+  })
+})
+
+describe('replyToIdea', () => {
+  it('sends the reply with the caller', async () => {
+    const fetch = respond(200, { idea })
+    const result = await replyToIdea(
+      { caller, platform: 'ios', id: 'i1', reply: 'Smaller first version', by: 'Jane' },
+      { apiUrl, fetch },
+    )
+    expect(result).toEqual({ ok: true, idea })
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, { body: string }]
+    expect(url).toBe('https://t.dev/api/v1/ideas/i1/reply')
+    expect(JSON.parse(init.body)).toMatchObject({ reply: 'Smaller first version', by: 'Jane' })
   })
 })
 

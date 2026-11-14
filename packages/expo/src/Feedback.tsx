@@ -55,6 +55,7 @@ import {
   isMoving,
   newlyWaiting,
   type OpenPr,
+  replyToIdea,
   sendStaffReport,
   submitIdea,
 } from './core/ideas.js'
@@ -550,6 +551,24 @@ export function ReportButton({
     replaceIdea(result.idea)
   }
 
+  async function reply(id: string, text: string) {
+    if (!caller || !platform) return
+    rememberName()
+    setIdeaBusy(id)
+    const result = await replyToIdea(
+      { caller, platform, id, reply: text, ...(rememberedName ? { by: rememberedName } : {}) },
+      { apiUrl },
+    )
+    setIdeaBusy(null)
+    if (!result.ok) {
+      haptics.warning()
+      setError(result.message)
+      return
+    }
+    haptics.success()
+    replaceIdea(result.idea)
+  }
+
   async function act(id: string, action: 'build' | 'retry' | 'approve') {
     if (!caller || !platform) return
     rememberName()
@@ -659,6 +678,7 @@ export function ReportButton({
           ideas={ideas}
           onShareIdea={() => void startReport(null, 'idea')}
           onAnswerIdea={(id, answers) => void answer(id, answers)}
+          onReplyIdea={(id, text) => void reply(id, text)}
           onIdeaAction={(id, action) => void act(id, action)}
           ideaBusy={ideaBusy}
           pulls={pulls}
