@@ -20131,6 +20131,12 @@ function easError(error62) {
   const line = specific.find((l) => EAS_PROBLEM.test(l)) ?? specific[0] ?? lines[0] ?? "EAS gave no details.";
   return line.replace(/[A-Za-z0-9_-]{32,}/g, "***").slice(0, 300);
 }
+function easHint(reason, platform, profile) {
+  if (/not validated for non-interactive|provisioning profile/i.test(reason)) {
+    return ` Run \`eas build --platform ${platform} --profile ${profile}\` once on your computer (it signs in to Apple and updates the profile), then push again.`;
+  }
+  return "";
+}
 function ensureNativeBuild(eas, input3) {
   if (input3.profiles.length === 0) return { state: "off", builds: [] };
   const entries = [];
@@ -20208,7 +20214,8 @@ function ensureNativeBuild(eas, input3) {
       const entry = toEntry(made, profile);
       if (entry) entries.push(entry);
     } catch (error62) {
-      message = `Couldn\u2019t start a ${profile} build: ${easError(error62)}`;
+      const reason = easError(error62);
+      message = `Couldn\u2019t start a ${profile} build: ${reason}${easHint(reason, input3.platform, profile)}`;
     }
   }
   const state = started ? "started" : building ? "building" : entries.length > 0 ? "found" : skipped && !message ? "off" : "failed";

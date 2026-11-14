@@ -77,6 +77,15 @@ export function easError(error: unknown): string {
   return line.replace(/[A-Za-z0-9_-]{32,}/g, '***').slice(0, 300)
 }
 
+/** What to do about the EAS errors teams hit most, after the reason. */
+export function easHint(reason: string, platform: 'ios' | 'android', profile: string): string {
+  // A device was registered since the last build, so the ad hoc profile needs Apple to re-sign it.
+  if (/not validated for non-interactive|provisioning profile/i.test(reason)) {
+    return ` Run \`eas build --platform ${platform} --profile ${profile}\` once on your computer (it signs in to Apple and updates the profile), then push again.`
+  }
+  return ''
+}
+
 /**
  * Makes sure a development build can run this PR on one platform. For each
  * profile, it looks for a build made for this runtime version; when there's
@@ -165,7 +174,8 @@ export function ensureNativeBuild(
       const entry = toEntry(made, profile)
       if (entry) entries.push(entry)
     } catch (error) {
-      message = `Couldn’t start a ${profile} build: ${easError(error)}`
+      const reason = easError(error)
+      message = `Couldn’t start a ${profile} build: ${reason}${easHint(reason, input.platform, profile)}`
     }
   }
   const state: NativeBuild['state'] = started

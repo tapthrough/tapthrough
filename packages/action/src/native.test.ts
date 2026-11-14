@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildPageUrl, easError, ensureNativeBuild, parseProfiles, pickBuild } from './native.js'
+import {
+  buildPageUrl,
+  easError,
+  easHint,
+  ensureNativeBuild,
+  parseProfiles,
+  pickBuild,
+} from './native.js'
 
 const app = { slug: 'notes', ownerAccount: { name: 'acme' } }
 const build = (id: string, status: string, extra = {}) => ({
@@ -150,5 +157,13 @@ describe('native builds for a PR', () => {
         ].join('\n'),
       }),
     ).toBe('Distribution Certificate is not validated for non-interactive builds.')
+    expect(
+      easHint(
+        'Distribution Certificate is not validated for non-interactive builds.',
+        'ios',
+        'development',
+      ),
+    ).toContain('`eas build --platform ios --profile development` once on your computer')
+    expect(easHint('Something else', 'ios', 'development')).toBe('')
   })
 })
