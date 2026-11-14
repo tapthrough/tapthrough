@@ -50,9 +50,12 @@ the key isn't written into the build at all.
 The round button opens **Feedback**:
 
 - **Report Issue.** Write what's wrong, mark up the screenshot, and send. It becomes a GitHub issue
-  labeled `tapthrough:report`, and the app shows its number and a link.
+  labeled `bug` and `tapthrough:report`, and the app shows its number and a link.
 - **Share Idea.** Claude writes it up as an issue, asks questions first if it needs to, and can build it
-  into a PR. See [Ideas from the app](ideas.md).
+  into a PR. Idea issues are labeled `enhancement` and `tapthrough:idea`. See [Ideas from the app](ideas.md).
+
+If your organization uses GitHub issue types, reports also get the **Bug** type and ideas the **Feature**
+type. Without them, the labels alone tell them apart.
 - **Ideas.** Every idea with where it is: written up, building, ready to test, merged. If something is
   stuck, it says so.
 
