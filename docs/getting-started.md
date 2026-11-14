@@ -146,6 +146,32 @@ eas device:create                                          # send the link to th
 eas build --profile development-device --platform ios      # rebuild after adding phones
 ```
 
+> **Already on TestFlight?** If the development build uses the same bundle ID as your TestFlight app,
+> installing it replaces the TestFlight app on the reviewer's phone, and Tapthrough links may open the
+> wrong app. Give the review app its own bundle ID and scheme first: see
+> [apps already in the store](https://tapthrough-cloud.vercel.app/docs/existing-app).
+
+### The first iPhone build is interactive
+
+EAS has to create an ad hoc provisioning profile that lists the registered phones, and that needs your
+Apple Developer sign-in. Run the first iPhone build in your own terminal, not in CI or through an agent.
+With `--non-interactive` it stops with *"EAS CLI couldn't find any credentials suitable for internal
+distribution"*. The prompts:
+
+| Prompt | Answer |
+| --- | --- |
+| Log in to your Apple account? | **Yes.** Sign in with the Apple ID on your developer team, then the 2FA code. |
+| Reuse this distribution certificate? | **Yes.** One certificate signs all your apps, including your TestFlight builds, and Apple allows only a few per team. |
+| Select devices for the ad hoc build | Keep every reviewer's iPhone selected (Space toggles), then Return. |
+
+After that, rebuilds run without prompts until you register another phone. Then run the build again
+interactively, so the profile picks up the new device.
+
+**On the phone:** open the build page from EAS on the iPhone and tap **Install**. On iOS 16 and later, turn
+on **Settings → Privacy & Security → Developer Mode** and restart when asked; the app won't open until
+you do. Then open the app once and sign in, so previews have an account to use until you add a
+[seed hook](#5-land-reviewers-on-the-right-screen-optional).
+
 ## 4. Add the workflow
 
 Add an `EXPO_TOKEN` secret to the repo. A robot token from your Expo account works best (it needs the

@@ -33,6 +33,17 @@ If something is missing, tell the user what and why, and ask before adding it. `
 `expo-dev-client` change native code, so they need a new build. If the app doesn't use Expo Router, stop:
 Tapthrough doesn't support it yet.
 
+**Is the app already on TestFlight or the App Store?** Look for `eas submit`, a `submit` section in
+`eas.json`, or a workflow that builds on pushes to the main branch. If so, tell the user before you
+change anything:
+
+- This one-PR setup makes the development build use the store app's bundle ID, so installing it replaces
+  the TestFlight app on a reviewer's phone. The
+  [apps already in the store](https://tapthrough-cloud.vercel.app/docs/existing-app) guide adds a
+  separate "(Dev)" app instead. Ask which they want.
+- Merging your PR may start a store build. Say so before you merge, and never push straight to the main
+  branch.
+
 In a monorepo, do everything below in the Expo app's directory and set `working-directory` in the
 workflow.
 
@@ -174,6 +185,9 @@ order:
    works best.
 3. **Make a development build** if native code changed (step 1 or 2 added a native dependency):
    `eas build --profile development --platform ios` (or `android`). Reviewers install it once.
+   For iPhones, the user registers each phone with `eas device:create`, then runs the first iPhone build
+   in their own terminal: it asks for their Apple sign-in, so you can't run it. Point them to
+   [the first iPhone build](getting-started.md#the-first-iphone-build-is-interactive) for the prompts.
 4. **Push any commit to this PR.** The Tapthrough comment appears in about two minutes, and the PR itself
    is the first thing to review.
 

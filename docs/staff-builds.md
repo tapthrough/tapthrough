@@ -16,12 +16,22 @@ GitHub (`gh auth login`) as someone with write access:
 npx @tapthrough/cli app-key
 ```
 
+If the repo was renamed or moved to another owner, `app-key` reads the old name from your `origin`
+remote and says the Tapthrough app isn't installed. Pass the current name with `--repo owner/name`, or
+update the remote with `git remote set-url origin <new url>`.
+
 It prints the key. Store it as an EAS environment variable for the builds that use it, so it isn't in
 the repo:
 
 ```sh
 eas env:create --name TAPTHROUGH_APP_KEY --value <key> --environment preview --visibility sensitive
 ```
+
+Use the EAS environment your TestFlight build profile reads. That's the profile's `environment` field
+or, without one, `development` for development-client profiles, `preview` for other internal ones and
+`production` for the rest. If you
+send the `production` profile to TestFlight, store the key with `--environment production`. A key in the
+wrong environment isn't an error: the build just has no Feedback button.
 
 ## 2. Turn it on for staging builds only
 
