@@ -62,6 +62,43 @@ async function api(route, body) {
   return text ? JSON.parse(text) : undefined
 }
 
+/**
+ * Other repos the agent may read, like the app's API, cloned read-only into the
+ * working folder. The token goes in a one-off header, so it isn't saved in the
+ * clone's config where the agent could read it. A failed clone is a warning.
+ */
+function cloneContext(context) {
+  if (!context?.token || !context.repos?.length) return
+  const auth = Buffer.from(`x-access-token:${context.token}`).toString('base64')
+  console.log(`::add-mask::${auth}`)
+  for (const { repo, path: dir } of context.repos) {
+    if (!dir.startsWith(`${workdir}/`)) continue
+    rmSync(dir, { recursive: true, force: true })
+    try {
+      execFileSync(
+        'git',
+        [
+          '-c',
+          `http.extraheader=AUTHORIZATION: basic ${auth}`,
+          'clone',
+          '--depth',
+          '1',
+          '--no-tags',
+          '--quiet',
+          `https://github.com/${repo}.git`,
+          dir,
+        ],
+        { stdio: ['ignore', 'ignore', 'pipe'] },
+      )
+      console.log(`Cloned ${repo} for reference.`)
+    } catch (error) {
+      console.log(
+        `::warning::Couldn't clone ${repo} for reference: ${String(error.stderr ?? error).slice(0, 300)}`,
+      )
+    }
+  }
+}
+
 async function claim() {
   const fixRequestId = process.env.FIX_REQUEST_ID
   if (!fixRequestId) throw new Error('This workflow runs from Tapthrough’s repository_dispatch.')
@@ -69,8 +106,18 @@ async function claim() {
   const task = await api('/api/v1/fix/claim', { apiVersion: 1, fixRequestId, workdir })
   // Grooming gets no token at all.
   if (task.pushToken) console.log(`::add-mask::${task.pushToken}`)
-  const { pushToken, ...rest } = task
-  writeFileSync(taskFile, JSON.stringify({ ...rest, fixRequestId }, null, 2))
+  if (task.context?.token) console.log(`::add-mask::${task.context.token}`)
+  cloneContext(task.context)
+  // Neither token is written down: the push token goes to the last step only.
+  const { pushToken, context, ...rest } = task
+  writeFileSync(
+    taskFile,
+    JSON.stringify(
+      { ...rest, context: context ? { repos: context.repos } : undefined, fixRequestId },
+      null,
+      2,
+    ),
+  )
   output('claimed', 'true')
   output('head-ref', task.headRef)
   // An issue fix starts from the default branch and pushes a branch of its own.

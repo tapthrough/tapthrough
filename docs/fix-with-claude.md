@@ -43,6 +43,23 @@ The Tapthrough app needs **Contents: Read and write** to start the workflow and 
 installation predates that permission, an org owner accepts it under **Settings → GitHub Apps → Tapthrough
 → Configure**.
 
+## Let Claude read your API
+
+If your app talks to a backend in another repo, Claude can't see it and has to guess, or stops. List those
+repos in `.tapthrough/settings.json` on your default branch:
+
+```json
+{ "context": ["your-org/api"] }
+```
+
+- **Install the Tapthrough app on them too** (same account). Repos it isn't installed on are skipped, and
+  Claude is told they're missing.
+- **Read-only.** Each run gets a token that can only read those repos, for about an hour. The workflow
+  clones them next to your code, and the token isn't left in the clone or given to Claude.
+- **Nothing there changes.** If a fix or idea also needs backend work, Claude says exactly what, in the
+  spec or its summary, instead of inventing an API.
+- Up to three repos. Fixes, issue fixes and ideas all use them.
+
 ## Start a fix
 
 - **From the app:** after sending a report that comes from the PR, tap **Ask Claude to fix**.
