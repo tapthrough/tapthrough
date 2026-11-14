@@ -53,16 +53,27 @@ function toEntry(build: EasBuild, profile: string): NativeBuild['builds'][number
   }
 }
 
-/** The first useful line of an EAS error, without anything that looks like a token. */
+/** EAS's progress notes, never the reason a build failed. */
+const EAS_INFO =
+  /^(Resolved ".*" environment|Learn more|Environment variables|Using remote|Loaded "env"|No environment variables|Build details|Waiting for|✔|- )/i
+const EAS_PROBLEM =
+  /error|fail|missing|invalid|cannot|can['’]t|unable|denied|must|expired|\bnot\b|requires?|limit/i
+/** EAS's last word on any failure; only shown when there's nothing more specific. */
+const EAS_GENERIC = /^Error:\s*(\w+ )?command failed\.?$|^Error:?$/i
+
+/** The line of an EAS error that says what went wrong, without anything that looks like a token. */
 export function easError(error: unknown): string {
   const raw =
     (error as { stderr?: Buffer | string })?.stderr?.toString() ||
     (error instanceof Error ? error.message : String(error))
+  const lines = raw
+    .split('\n')
+    .map((l) => l.replace(/\u001b\[[0-9;]*m/g, '').trim())
+    .filter((l) => l && !/^(›|»|at\s)/.test(l) && !EAS_INFO.test(l))
+  // The first line that names a problem; EAS often prints notes before it.
+  const specific = lines.filter((l) => !EAS_GENERIC.test(l))
   const line =
-    raw
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l && !/^(›|»|\s*at\s)/.test(l)) ?? 'EAS gave no details.'
+    specific.find((l) => EAS_PROBLEM.test(l)) ?? specific[0] ?? lines[0] ?? 'EAS gave no details.'
   return line.replace(/[A-Za-z0-9_-]{32,}/g, '***').slice(0, 300)
 }
 

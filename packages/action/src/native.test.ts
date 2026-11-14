@@ -138,5 +138,17 @@ describe('native builds for a PR', () => {
     expect(easError(new Error('token ghs_abcdefghijklmnopqrstuvwxyz0123456789 bad'))).toBe(
       'token *** bad',
     )
+    // EAS prints notes first; the reason comes later.
+    expect(
+      easError({
+        stderr: [
+          'Resolved "development" environment for the build. Learn more: https://docs.expo.dev/eas/environment-variables/#environments',
+          'No environment variables with visibility "Plain text" and "Sensitive" found for the "development" environment on EAS.',
+          '',
+          '\u001b[31mDistribution Certificate is not validated for non-interactive builds.\u001b[39m',
+          '    Error: build command failed.',
+        ].join('\n'),
+      }),
+    ).toBe('Distribution Certificate is not validated for non-interactive builds.')
   })
 })

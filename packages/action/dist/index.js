@@ -20121,9 +20121,14 @@ function toEntry(build, profile) {
     status: build.status
   };
 }
+var EAS_INFO = /^(Resolved ".*" environment|Learn more|Environment variables|Using remote|Loaded "env"|No environment variables|Build details|Waiting for|✔|- )/i;
+var EAS_PROBLEM = /error|fail|missing|invalid|cannot|can['’]t|unable|denied|must|expired|\bnot\b|requires?|limit/i;
+var EAS_GENERIC = /^Error:\s*(\w+ )?command failed\.?$|^Error:?$/i;
 function easError(error62) {
   const raw = error62?.stderr?.toString() || (error62 instanceof Error ? error62.message : String(error62));
-  const line = raw.split("\n").map((l) => l.trim()).find((l) => l && !/^(›|»|\s*at\s)/.test(l)) ?? "EAS gave no details.";
+  const lines = raw.split("\n").map((l) => l.replace(/\u001b\[[0-9;]*m/g, "").trim()).filter((l) => l && !/^(›|»|at\s)/.test(l) && !EAS_INFO.test(l));
+  const specific = lines.filter((l) => !EAS_GENERIC.test(l));
+  const line = specific.find((l) => EAS_PROBLEM.test(l)) ?? specific[0] ?? lines[0] ?? "EAS gave no details.";
   return line.replace(/[A-Za-z0-9_-]{32,}/g, "***").slice(0, 300);
 }
 function ensureNativeBuild(eas, input3) {
