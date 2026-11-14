@@ -92,13 +92,17 @@ Then:
    "runtimeVersion": { "policy": "fingerprint" }
    ```
 
-   The fingerprint hashes your app config, including `seedHookUrl` and `apiUrl`, so changing either one
-   would need a new build. They never touch native code, so you can leave them out with a
+   The fingerprint hashes your app config, including `seedHookUrl` and `apiUrl`, and the version of every
+   package with a config plugin, `@tapthrough/expo` included. So changing a URL or upgrading Tapthrough
+   would need a new build, and PRs made before the upgrade wouldn't open on builds made after it.
+   Tapthrough has no native code and its plugin only writes `extra`, so leave it out with a
    `fingerprint.config.js` next to `app.json`:
 
    ```js
    /** @type {import('@expo/fingerprint').Config} */
    module.exports = {
+     // Tapthrough's version: upgrading it never changes native code.
+     ignorePaths: ['node_modules/@tapthrough/expo/package.json'],
      sourceSkips: [
        // Expo's default ("balanced") skips…
        'PackageJsonAndroidAndIosScriptsIfNotContainRun',

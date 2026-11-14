@@ -1,14 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   approveMessage,
+  fetchFeed,
   fetchIdeas,
   fetchOpenPrs,
+  fixReport,
   type Idea,
   ideaAction,
   ideasNeedingYou,
   isMoving,
   newlyWaiting,
+  type Report,
   replyToIdea,
+  reportsNeedingYou,
   sendStaffReport,
   stepTime,
   submitIdea,
@@ -190,7 +194,64 @@ describe('app key callers', () => {
       ok: true,
       issueNumber: 12,
       issueUrl: 'https://github.com/a/b/issues/12',
+      fixing: false,
     })
     expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe('https://t.dev/api/v1/reports')
+  })
+})
+
+const report = {
+  id: 'r1',
+  title: 'Header is not a header',
+  statusLine: 'Claude is fixing it',
+  fix: { status: 'fixing' },
+  canFix: false,
+} as Report
+
+describe('bug reports', () => {
+  it('reads reports alongside ideas, and none from an older server', async () => {
+    expect(
+      await fetchFeed(caller, 'ios', {
+        apiUrl,
+        fetch: respond(200, { ideas: [idea], reports: [report] }),
+      }),
+    ).toEqual({ ideas: [idea], reports: [report] })
+    expect(
+      await fetchFeed(caller, 'ios', { apiUrl, fetch: respond(200, { ideas: [idea] }) }),
+    ).toEqual({
+      ideas: [idea],
+      reports: [],
+    })
+    expect(await fetchIdeas(caller, 'ios', { apiUrl, fetch: respond(500, {}) })).toEqual([])
+  })
+
+  it('starts Fix with Claude on a report', async () => {
+    const fetch = respond(200, { report, fix: 'started' })
+    const result = await fixReport(
+      { caller: { kind: 'key', appKey: 'k'.repeat(30) }, platform: 'ios', id: 'r1', by: 'Sam' },
+      { apiUrl, fetch },
+    )
+    expect(result).toEqual({ ok: true, report })
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://t.dev/api/v1/reports/r1/fix')
+    expect(JSON.parse(String(init.body))).toEqual({
+      apiVersion: 1,
+      appKey: 'k'.repeat(30),
+      platform: 'ios',
+      by: 'Sam',
+    })
+  })
+
+  it('counts fixes ready to test', () => {
+    const ready = { ...report, id: 'r2', fix: { ...report.fix, status: 'ready' } } as Report
+    expect(reportsNeedingYou([report, ready])).toBe(1)
+  })
+
+  it('says when Claude started on a filed report', async () => {
+    const result = await sendStaffReport(
+      { appKey: 'k'.repeat(30), platform: 'ios', report: { body: 'Broken' } },
+      { apiUrl, fetch: respond(201, { issueNumber: 9, issueUrl: 'u', fix: 'started' }) },
+    )
+    expect(result).toEqual({ ok: true, issueNumber: 9, issueUrl: 'u', fixing: true })
   })
 })

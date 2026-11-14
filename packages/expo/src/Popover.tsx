@@ -21,7 +21,7 @@ import type {
   SetupLine,
 } from './core/feedback.js'
 import { resetMessage } from './core/feedback.js'
-import { type Idea, type IdeaStage, type OpenPr, stepTime } from './core/ideas.js'
+import { type Idea, type IdeaStage, type OpenPr, type Report, stepTime } from './core/ideas.js'
 import {
   nextOpenScenario,
   otherStates,
@@ -49,6 +49,8 @@ export type Nav =
   | { view: 'explore'; key: string }
   | { view: 'recheck'; id: string }
   | { view: 'idea'; id: string }
+  /** A bug sent from this staging or TestFlight app, and Claude's fix. */
+  | { view: 'report'; id: string }
   /** The repo's other open PRs, to switch builds. */
   | { view: 'prs' }
 
@@ -93,7 +95,10 @@ export interface ReviewPopoverProps {
   onAnswerIdea: (id: string, answers: string[]) => void
   onReplyIdea: (id: string, reply: string) => void
   onIdeaAction: (id: string, action: 'build' | 'retry' | 'approve') => void
-  /** The idea whose request is in flight, to show a spinner on its button. */
+  /** Bugs sent from staging and TestFlight builds, newest first, with Claude's fixes. */
+  reports: Report[]
+  onFixReport: (id: string) => void
+  /** The idea or report whose request is in flight, to show a spinner on its button. */
   ideaBusy: string | null
   /** Open PRs with previews; null until loaded. */
   pulls: OpenPr[] | null
@@ -140,7 +145,7 @@ function entryFor(checklist: Checklist, key: string): Entry | undefined {
 const navKey = (nav: Nav) =>
   nav.view === 'list' || nav.view === 'prs'
     ? nav.view
-    : nav.view === 'recheck' || nav.view === 'idea'
+    : nav.view === 'recheck' || nav.view === 'idea' || nav.view === 'report'
       ? `${nav.view}:${nav.id}`
       : nav.view === 'step'
         ? `step:${nav.key}:${nav.index}`
@@ -287,6 +292,10 @@ function renderView(p: ReviewPopoverProps, colors: Colors): Screen {
     const idea = p.ideas.find((i) => i.id === nav.id)
     return idea ? ideaView(p, idea, colors) : listView(p, colors)
   }
+  if (nav.view === 'report') {
+    const report = p.reports.find((r) => r.id === nav.id)
+    return report ? reportView(p, report, colors) : listView(p, colors)
+  }
   if (nav.view === 'recheck') {
     const item = checklist.recheck?.find((r) => r.id === nav.id)
     return item ? recheckView(p, item, colors) : listView(p, colors)
@@ -417,8 +426,29 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
             ))}
           </>
         ) : null}
+        {p.reports.length ? (
+          <>
+            <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>Bugs</Text>
+            {p.reports.slice(0, 5).map((report) => (
+              <Row
+                key={report.id}
+                colors={colors}
+                lead={
+                  <Badge
+                    icon="ladybug"
+                    colors={colors}
+                    attention={report.fix?.status === 'ready'}
+                  />
+                }
+                title={report.title}
+                subtitle={report.statusLine}
+                onPress={() => p.onNav({ view: 'report', id: report.id }, 'forward')}
+              />
+            ))}
+          </>
+        ) : null}
         {p.staff ? (
-          p.ideas.length ? null : (
+          p.ideas.length || p.reports.length ? null : (
             <Text style={[text.subhead, { color: colors.secondary }]}>
               Something wrong? Report it, and it becomes a GitHub issue with a screenshot. Got an
               idea? Claude writes it up, and can build it.
@@ -578,6 +608,93 @@ function ideaView(p: ReviewPopoverProps, idea: Idea, colors: Colors): Screen {
           links={[
             ...links,
             idea.runUrl && !idea.warning ? { title: 'Workflow Run', url: idea.runUrl } : null,
+          ]}
+          colors={colors}
+        />
+      </>
+    ),
+    footer,
+  }
+}
+
+function reportView(p: ReviewPopoverProps, report: Report, colors: Colors): Screen {
+  const busy = p.ideaBusy === report.id
+  const fix = report.fix
+  const here = fix?.prNumber != null && fix.prNumber === p.checklist.pr
+  let footer: ReactNode = null
+  if (fix?.status === 'ready' && !here) {
+    footer = p.staff ? (
+      fix.pageUrl ? (
+        <Capsule
+          title={`Open PR #${fix.prNumber} Page`}
+          kind="plain"
+          onPress={() => Linking.openURL(fix.pageUrl as string)}
+        />
+      ) : null
+    ) : (
+      <Capsule
+        title="Open Fix to Test"
+        onPress={() => {
+          const pr = p.pulls?.find((pull) => pull.number === fix.prNumber)
+          if (pr?.openUrl) p.onSwitchPr(pr)
+          else if (pr?.pageUrl ?? fix.pageUrl)
+            Linking.openURL((pr?.pageUrl ?? fix.pageUrl) as string)
+          else if (fix.prUrl) Linking.openURL(fix.prUrl)
+        }}
+      />
+    )
+  } else if (report.canFix) {
+    footer = (
+      <Capsule
+        title={fix ? 'Try Again' : 'Fix with Claude'}
+        {...(fix ? { kind: 'plain' as const } : {})}
+        busy={busy}
+        onPress={() => p.onFixReport(report.id)}
+      />
+    )
+  }
+  let explain: string | null = null
+  if (!fix) {
+    explain =
+      'It’s a GitHub issue. Fix with Claude has Claude fix it from your screenshot and the app’s logs, and open a PR you can test.'
+  } else if (fix.status === 'ready') {
+    explain = here
+      ? 'You’re on the fix’s build. Check it’s fixed, then merge the PR on GitHub.'
+      : p.staff
+        ? `You’re on ${p.staff}, not a PR build, so PR #${fix.prNumber} can’t open here. Open it on a phone with the development build, or in a simulator from the PR’s page.`
+        : 'Open the fix’s build and check it’s fixed.'
+  } else if (fix.status === 'not_set_up') {
+    explain =
+      'Claude fixes bugs in the repo’s Fix with Claude workflow, and this repo doesn’t have it yet. The issue says how to add it.'
+  } else if (fix.status === 'failed') {
+    explain = 'The fix run stopped before it finished. Try again, or see the run.'
+  }
+  return {
+    title: report.title,
+    subtitle: report.statusLine,
+    back: true,
+    body: (
+      <>
+        {fix?.status === 'fixing' ? (
+          <View style={styles.pair}>
+            <ActivityIndicator color={colors.secondary} />
+            <Text style={[text.footnote, styles.rowText, { color: colors.secondary }]}>
+              Claude is reading the code and fixing it. It opens a PR with its own build to test,
+              usually within a few minutes.
+            </Text>
+          </View>
+        ) : null}
+        {fix?.summary ? (
+          <Text style={[text.subhead, { color: colors.label }]}>{fix.summary}</Text>
+        ) : null}
+        {explain ? (
+          <Text style={[text.footnote, { color: colors.secondary }]}>{explain}</Text>
+        ) : null}
+        <LinkRow
+          links={[
+            fix?.prUrl ? { title: `PR #${fix.prNumber}`, url: fix.prUrl } : null,
+            { title: `Issue #${report.issueNumber}`, url: report.issueUrl },
+            fix?.runUrl ? { title: 'Workflow Run', url: fix.runUrl } : null,
           ]}
           colors={colors}
         />

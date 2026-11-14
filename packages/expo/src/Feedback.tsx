@@ -46,8 +46,9 @@ import {
   answerIdea,
   approveMessage,
   type Caller,
-  fetchIdeas,
+  fetchFeed,
   fetchOpenPrs,
+  fixReport,
   type Idea,
   type IdeaDraft,
   ideaAction,
@@ -55,7 +56,9 @@ import {
   isMoving,
   newlyWaiting,
   type OpenPr,
+  type Report,
   replyToIdea,
+  reportsNeedingYou,
   sendStaffReport,
   submitIdea,
 } from './core/ideas.js'
@@ -231,6 +234,7 @@ export function ReportButton({
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [ideas, setIdeas] = useState<Idea[]>([])
+  const [reports, setReports] = useState<Report[]>([])
   const [ideaBusy, setIdeaBusy] = useState<string | null>(null)
   const [pulls, setPulls] = useState<OpenPr[] | null>(null)
   const [composerKind, setComposerKind] = useState<'issue' | 'idea'>('issue')
@@ -262,13 +266,14 @@ export function ReportButton({
 
   async function refresh() {
     if (!caller || !platform) return null
-    const [list, recent] = await Promise.all([
+    const [list, feed] = await Promise.all([
       preview ? fetchChecklist(preview, platform, { apiUrl }) : Promise.resolve(STAFF_CHECKLIST),
-      fetchIdeas(caller, platform, { apiUrl }),
+      fetchFeed(caller, platform, { apiUrl }),
     ])
     if (list) setChecklist(list)
-    setIdeas(recent)
-    const waiting = newlyWaiting(recent, announcedIdeas)
+    setIdeas(feed.ideas)
+    setReports(feed.reports)
+    const waiting = newlyWaiting(feed.ideas, announcedIdeas)
     const newer = list?.newerBuild
     if (newer && !announcedBuilds.has(newer.updateGroupId)) {
       announcedBuilds.add(newer.updateGroupId)
@@ -301,13 +306,18 @@ export function ReportButton({
     }
   }, [caller, platform, apiUrl])
 
-  // Watching an idea that's being written up or built: check every few seconds, not every 30.
+  // Watching an idea being written up or built, or a bug being fixed: check every few seconds, not every 30.
   const watched = nav.view === 'idea' ? ideas.find((i) => i.id === nav.id) : undefined
-  const watching = phase === 'open' && watched !== undefined && isMoving(watched)
+  const watchedReport = nav.view === 'report' ? reports.find((r) => r.id === nav.id) : undefined
+  const watching =
+    phase === 'open' &&
+    ((watched !== undefined && isMoving(watched)) || watchedReport?.fix?.status === 'fixing')
   useEffect(() => {
     if (!watching || !caller || !platform) return
     const timer = setInterval(async () => {
-      setIdeas(await fetchIdeas(caller, platform, { apiUrl }))
+      const feed = await fetchFeed(caller, platform, { apiUrl })
+      setIdeas(feed.ideas)
+      setReports(feed.reports)
     }, IDEA_REFRESH_MS)
     return () => clearInterval(timer)
   }, [watching, caller, platform, apiUrl])
@@ -569,6 +579,25 @@ export function ReportButton({
     replaceIdea(result.idea)
   }
 
+  async function fixBug(id: string) {
+    if (!caller || !platform) return
+    rememberName()
+    haptics.selection()
+    setIdeaBusy(id)
+    const result = await fixReport(
+      { caller, platform, id, ...(rememberedName ? { by: rememberedName } : {}) },
+      { apiUrl },
+    )
+    setIdeaBusy(null)
+    if (!result.ok) {
+      haptics.warning()
+      setError(result.message)
+      return
+    }
+    haptics.success()
+    setReports((current) => current.map((r) => (r.id === id ? result.report : r)))
+  }
+
   async function act(id: string, action: 'build' | 'retry' | 'approve') {
     if (!caller || !platform) return
     rememberName()
@@ -680,6 +709,8 @@ export function ReportButton({
           onAnswerIdea={(id, answers) => void answer(id, answers)}
           onReplyIdea={(id, text) => void reply(id, text)}
           onIdeaAction={(id, action) => void act(id, action)}
+          reports={reports}
+          onFixReport={(id) => void fixBug(id)}
           ideaBusy={ideaBusy}
           pulls={pulls}
           onShowPulls={() => void showPulls()}
@@ -695,7 +726,7 @@ export function ReportButton({
       {showButton ? (
         <Bubble
           onPress={toggle}
-          badge={buttonBadge(checklist, ideasNeedingYou(ideas))}
+          badge={buttonBadge(checklist, ideasNeedingYou(ideas) + reportsNeedingYou(reports))}
           busy={phase === 'loading'}
           active={phase === 'open'}
           onRest={setAnchor}
@@ -708,8 +739,8 @@ export function ReportButton({
           route={pathname}
           branch={preview?.branch}
           staff={staffMode ? appLabel() : null}
-          onSendStaff={(input) =>
-            sendStaffReport(
+          onSendStaff={async (input) => {
+            const result = await sendStaffReport(
               {
                 appKey: appKey ?? '',
                 platform,
@@ -723,7 +754,10 @@ export function ReportButton({
               },
               { apiUrl },
             )
-          }
+            // So it's under Bugs, with its fix, when the menu opens next.
+            if (result.ok) void refresh()
+            return result
+          }}
           device={deviceLabel()}
           hasScenario={Boolean(controller.lastScenarioId())}
           failedStep={failing?.step ?? null}
@@ -1002,7 +1036,7 @@ type Status =
   | { kind: 'error'; message: string }
   | { kind: 'idea_sent'; idea: Idea; emailed: boolean }
   /** A staff build's report, filed straight as a GitHub issue. */
-  | { kind: 'filed'; issueNumber: number; issueUrl: string }
+  | { kind: 'filed'; issueNumber: number; issueUrl: string; fixing: boolean }
 
 function Composer({
   screenshot,
@@ -1111,7 +1145,12 @@ function Composer({
     }
     haptics.success()
     Keyboard.dismiss()
-    setStatus({ kind: 'filed', issueNumber: result.issueNumber, issueUrl: result.issueUrl })
+    setStatus({
+      kind: 'filed',
+      issueNumber: result.issueNumber,
+      issueUrl: result.issueUrl,
+      fixing: result.fixing,
+    })
   }
 
   async function send() {
@@ -1165,7 +1204,12 @@ function Composer({
         scrim={status.kind === 'sent' || status.kind === 'idea_sent' || status.kind === 'filed'}
       >
         {status.kind === 'filed' ? (
-          <Filed issueNumber={status.issueNumber} issueUrl={status.issueUrl} onClose={onClose} />
+          <Filed
+            issueNumber={status.issueNumber}
+            issueUrl={status.issueUrl}
+            fixing={status.fixing}
+            onClose={onClose}
+          />
         ) : status.kind === 'idea_sent' ? (
           <IdeaSent
             emailed={status.emailed}
@@ -1449,10 +1493,12 @@ function issueStatus(number: number, fix: IssueFix): string {
 function Filed({
   issueNumber,
   issueUrl,
+  fixing,
   onClose,
 }: {
   issueNumber: number
   issueUrl: string
+  fixing: boolean
   onClose: () => void
 }) {
   const colors = useColors()
@@ -1467,7 +1513,9 @@ function Filed({
           <Icon name="checkmark" size={22} color={colors.tint} />
         </View>
         <Text style={[text.subhead, styles.center, { color: colors.label }]}>
-          Created issue #{issueNumber} with your screenshot and details. The team sees it on GitHub.
+          {fixing
+            ? `Created issue #${issueNumber} with your screenshot and details, and Claude started on a fix. Follow it under Bugs in the Review menu.`
+            : `Created issue #${issueNumber} with your screenshot and details. The team sees it on GitHub.`}
         </Text>
         <Capsule title="View on GitHub" kind="plain" onPress={() => Linking.openURL(issueUrl)} />
         <Capsule title="Done" onPress={onClose} />
