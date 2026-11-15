@@ -1,5 +1,5 @@
 name: Tapthrough Fix
-description: Lets Claude fix a bug reported from a Tapthrough preview, or write up and build an idea sent from the app
+description: Lets Claude fix a bug reported from a Tapthrough preview, review a PR's code and add missing tests, or write up and build an idea sent from the app
 author: Tapthrough
 branding:
   icon: tool
@@ -27,6 +27,9 @@ inputs:
   build-max-turns:
     description: Upper bound on turns when building an idea from the app
     default: '80'
+  review-max-turns:
+    description: Upper bound on turns for each pass of a code review
+    default: '40'
 
 runs:
   using: composite
@@ -52,6 +55,13 @@ runs:
         TAPTHROUGH_API_URL: ${{ inputs.api-url }}
       run: node "$GITHUB_ACTION_PATH/fix.mjs" prepare
 
+    # Code review only: the repo's dependencies, so the tests Claude writes can run.
+    # No secrets reach this step or the test runs.
+    - name: Install dependencies for tests
+      if: steps.claim.outputs.mode == 'review'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/fix.mjs" install
+
     - name: Install Claude Code
       shell: bash
       env:
@@ -67,7 +77,29 @@ runs:
         CLAUDE_MAX_TURNS: ${{ inputs.max-turns }}
         CLAUDE_GROOM_MAX_TURNS: ${{ inputs.groom-max-turns }}
         CLAUDE_BUILD_MAX_TURNS: ${{ inputs.build-max-turns }}
+        CLAUDE_REVIEW_MAX_TURNS: ${{ inputs.review-max-turns }}
       run: node "$GITHUB_ACTION_PATH/fix.mjs" agent
+
+    - id: verify
+      name: Run the tests Claude wrote
+      if: steps.claim.outputs.mode == 'review' && steps.agent.outcome == 'success'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/fix.mjs" verify
+
+    - id: retry
+      name: Let Claude fix its failing tests
+      if: steps.verify.outputs.failed == 'true'
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        CLAUDE_MODEL: ${{ inputs.model }}
+        CLAUDE_REVIEW_MAX_TURNS: ${{ inputs.review-max-turns }}
+      run: node "$GITHUB_ACTION_PATH/fix.mjs" agent retry
+
+    - name: Run the tests again
+      if: steps.verify.outputs.failed == 'true'
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/fix.mjs" verify final
 
     - name: Push the fix and report back
       if: always() && steps.claim.outputs.claimed == 'true'

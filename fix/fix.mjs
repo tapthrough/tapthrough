@@ -19,7 +19,13 @@ const PROTECTED = [
 /** A build adds a scenario for its screen, so testers land on it; nothing else in `.tapthrough/`. */
 const BUILD_ALLOWED = [/^\.tapthrough\/scenarios\/[\w-]+\.json$/]
 
+/** A code review may only add or change tests. */
+const TEST_FILE = /(^|\/)(__tests__|__snapshots__)\/|\.(test|spec)\.[cm]?[jt]sx?$/
+const testsFile = path.join(workdir, 'tests.json')
+const testOutputFile = path.join(workdir, 'test-output.txt')
+
 function isProtected(file, mode) {
+  if (mode === 'review') return !TEST_FILE.test(file) || PROTECTED.some((pattern) => pattern.test(file))
   if (mode === 'build' && BUILD_ALLOWED.some((pattern) => pattern.test(file))) return false
   return PROTECTED.some((pattern) => pattern.test(file))
 }
@@ -119,6 +125,7 @@ async function claim() {
     ),
   )
   output('claimed', 'true')
+  output('mode', task.mode)
   output('head-ref', task.headRef)
   // An issue fix starts from the default branch and pushes a branch of its own.
   output('checkout-ref', task.checkoutRef ?? task.headRef)
@@ -126,6 +133,7 @@ async function claim() {
   const what = {
     issue: `Fixing issue #${task.issue} from ${task.checkoutRef}, onto ${task.headRef}.`,
     groom: `Writing up an idea from the app against ${task.checkoutRef}.`,
+    review: `Reviewing the code of PR #${task.pr} (branch ${task.headRef}).`,
     build: `Building idea #${task.issue} from ${task.checkoutRef}, onto ${task.headRef}.`,
   }
   console.log(what[task.mode] ?? `Fixing a report on PR #${task.pr} (branch ${task.headRef}).`)
@@ -133,8 +141,8 @@ async function claim() {
 
 async function prepare() {
   const task = JSON.parse(readFileSync(taskFile, 'utf8'))
-  // Only a PR fix has a diff to blame; issues and ideas start from the default branch.
-  if (task.mode === 'pr' || task.mode === undefined) {
+  // Only a PR fix or review has a diff; issues and ideas start from the default branch.
+  if (task.mode === 'pr' || task.mode === 'review' || task.mode === undefined) {
     // fetch-depth: 0 already has the base branch; fetch it again only if it's missing.
     try {
       git('rev-parse', '--verify', `origin/${task.baseRef}`)
@@ -148,21 +156,182 @@ async function prepare() {
     const response = await fetch(task.screenshotUrl)
     if (response.ok) writeFileSync(task.paths.screenshot, Buffer.from(await response.arrayBuffer()))
   }
+  if (task.mode === 'review') {
+    const setup = testSetup()
+    task.testCommand = setup?.command ?? null
+    task.install = setup?.install ?? null
+    task.prompt = `${task.prompt}\n\n${testSetupPrompt(setup)}`
+    writeFileSync(taskFile, JSON.stringify(task, null, 2))
+  }
   writeFileSync(path.join(workdir, 'prompt.md'), task.prompt)
+}
+
+/**
+ * How this repo runs its tests: its package manager and `test` script. Null
+ * when it has none, so the review writes no tests.
+ */
+function testSetup() {
+  let pkg
+  try {
+    pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+  } catch {
+    return null
+  }
+  const script = pkg.scripts?.test
+  if (typeof script !== 'string' || !script.trim() || /no test specified/.test(script)) return null
+  const manager = existsSync('pnpm-lock.yaml')
+    ? 'pnpm'
+    : existsSync('yarn.lock')
+      ? 'yarn'
+      : existsSync('bun.lockb') || existsSync('bun.lock')
+        ? 'bun'
+        : 'npm'
+  const install = {
+    npm: existsSync('package-lock.json') ? ['npm', 'ci'] : ['npm', 'install'],
+    pnpm: ['pnpm', 'install', '--frozen-lockfile'],
+    yarn: ['yarn', 'install', '--frozen-lockfile'],
+    bun: ['bun', 'install', '--frozen-lockfile'],
+  }[manager]
+  // `--` passes the test files on to Jest or Vitest.
+  const command = manager === 'npm' ? ['npm', 'test', '--'] : [manager, 'test']
+  const existing = git('ls-files')
+    .split('\n')
+    .filter((file) => TEST_FILE.test(file) && !file.includes('node_modules/'))
+    .slice(0, 15)
+  return { manager, install, command, script, existing }
+}
+
+function testSetupPrompt(setup) {
+  if (!setup) {
+    return [
+      '## Test setup',
+      '',
+      'This repo has no `test` script, so there is nothing to run tests with. Write no test files. Put the most important cases that should be tested in your findings instead (severity "low"), and set `tests` to [].',
+    ].join('\n')
+  }
+  return [
+    '## Test setup',
+    '',
+    `Tests run with \`${setup.command.join(' ')} <files>\` (the \`test\` script is \`${setup.script}\`).`,
+    ...(setup.existing.length
+      ? [
+          'Existing tests to copy the style of:',
+          ...setup.existing.map((file) => `- ${file}`),
+        ]
+      : ['There are no tests yet: write the first ones in the style the test script expects.']),
+  ].join('\n')
+}
+
+/** Installs the repo's dependencies so its tests can run. No secrets are in this step's environment. */
+function install() {
+  const task = JSON.parse(readFileSync(taskFile, 'utf8'))
+  if (task.mode !== 'review' || !task.install) return
+  if (task.install[0] !== 'npm') execFileSync('corepack', ['enable'], { stdio: 'inherit' })
+  execFileSync(task.install[0], task.install.slice(1), {
+    stdio: 'inherit',
+    env: testEnv(),
+    timeout: 10 * 60 * 1000,
+  })
+}
+
+/** What test commands see: no GitHub, OIDC or model tokens. */
+function testEnv() {
+  return {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    LANG: process.env.LANG ?? 'en_US.UTF-8',
+    CI: 'true',
+    NODE_ENV: 'test',
+    TZ: 'UTC',
+  }
+}
+
+/** Test files the agent added or changed, after anything else it touched is undone. */
+function agentTests() {
+  restoreProtected('review')
+  return git('status', '--porcelain', '--untracked-files=all')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.slice(3).replace(/^.* -> /, ''))
+    .filter((file) => TEST_FILE.test(file) && !/__snapshots__\//.test(file) && existsSync(file))
+}
+
+function countCases(file) {
+  try {
+    return (readFileSync(file, 'utf8').match(/\b(it|test)(\.each\([\s\S]*?\))?\s*\(/g) ?? [])
+      .length
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Runs the agent's tests. On a failure the first time, it hands the output to
+ * the agent's second try; the final time, it drops the tests and says why.
+ */
+function verify() {
+  const task = JSON.parse(readFileSync(taskFile, 'utf8'))
+  if (task.mode !== 'review') return
+  const final = process.argv[3] === 'final'
+  const files = agentTests()
+  const write = (tests) => writeFileSync(testsFile, JSON.stringify(tests, null, 2))
+  if (!task.testCommand) {
+    write({ status: 'none', added: [] })
+    output('failed', 'false')
+    return
+  }
+  if (files.length === 0) {
+    write({ status: 'not_run', added: [] })
+    output('failed', 'false')
+    return
+  }
+  const [cmd, ...args] = task.testCommand
+  const run = spawnSync(cmd, [...args, ...files], {
+    env: testEnv(),
+    encoding: 'utf8',
+    timeout: 10 * 60 * 1000,
+    maxBuffer: 64 * 1024 * 1024,
+  })
+  const text = `${run.stdout ?? ''}\n${run.stderr ?? ''}`.trim()
+  console.log(text.slice(-6000))
+  if (run.status === 0) {
+    write({ status: 'passed', added: files.map((file) => ({ file, cases: countCases(file) })) })
+    output('failed', 'false')
+    return
+  }
+  writeFileSync(testOutputFile, text.slice(-20000))
+  if (!final) {
+    console.log("The agent's tests failed; giving it one more try with the output.")
+    output('failed', 'true')
+    return
+  }
+  // Still failing: leave its tests out, and say why on the PR.
+  for (const file of files) {
+    if (git('ls-files', '--', file)) git('checkout', 'HEAD', '--', file)
+    else rmSync(file, { force: true })
+  }
+  write({ status: 'failed', added: [], output: text.slice(-3000) })
+  output('failed', 'true')
 }
 
 function agent() {
   const task = JSON.parse(readFileSync(taskFile, 'utf8'))
   // Grooming reads the code and writes only its verdict; nothing it changes is pushed.
   const groom = task.mode === 'groom'
+  const retry = process.argv[3] === 'retry'
+  const prompt =
+    task.mode === 'review' && retry
+      ? `${task.prompt}\n\n## Your tests failed\n\nThe test run's output is in ${testOutputFile}. Fix the tests you wrote so they pass, changing only test files. If a test fails because the app code is wrong, delete that test and add the problem to \`findings\`. Then write ${task.paths.verdict} again.`
+      : task.prompt
   const turns =
+    (task.mode === 'review' && process.env.CLAUDE_REVIEW_MAX_TURNS) ||
     (groom && process.env.CLAUDE_GROOM_MAX_TURNS) ||
     (task.mode === 'build' && process.env.CLAUDE_BUILD_MAX_TURNS) ||
     process.env.CLAUDE_MAX_TURNS ||
     '40'
   const args = [
     '-p',
-    task.prompt,
+    prompt,
     '--allowedTools',
     groom ? 'Read,Glob,Grep,Write' : 'Read,Edit,MultiEdit,Write,Glob,Grep',
     '--disallowedTools',
@@ -265,6 +434,10 @@ async function finish() {
     await report({ outcome: 'failed', summary: 'The agent step failed; see the run.' })
     return
   }
+  if (task.mode === 'review') {
+    await finishReview(task, report)
+    return
+  }
   if (task.mode === 'groom') {
     const groomed = readGroomVerdict(task.paths.verdict)
     await report(groomed ?? { outcome: 'failed', summary: 'Claude wrote no spec.' })
@@ -336,7 +509,91 @@ async function finish() {
   console.log(`Pushed ${commitSha.slice(0, 7)} to ${task.headRef}.`)
 }
 
-const steps = { claim, prepare, agent, finish }
+/** The agent's review, as Tapthrough expects it; it checks the shape again. */
+function readReviewVerdict(file) {
+  if (!existsSync(file)) return undefined
+  try {
+    const v = JSON.parse(readFileSync(file, 'utf8'))
+    return {
+      summary: String(v.summary ?? '').slice(0, 1000),
+      findings: (Array.isArray(v.findings) ? v.findings : []).slice(0, 20).map((f) => ({
+        severity: ['high', 'medium', 'low'].includes(f?.severity) ? f.severity : 'medium',
+        ...(typeof f?.file === 'string' ? { file: f.file.slice(0, 300) } : {}),
+        ...(Number.isInteger(f?.line) && f.line > 0 ? { line: f.line } : {}),
+        title: String(f?.title ?? 'Untitled finding').slice(0, 200),
+        ...(f?.detail ? { detail: String(f.detail).slice(0, 1000) } : {}),
+      })),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+async function finishReview(task, report) {
+  const verdict = readReviewVerdict(task.paths.verdict)
+  if (!verdict) {
+    await report({ outcome: 'failed', summary: 'Claude wrote no review.' })
+    return
+  }
+  let tests = existsSync(testsFile)
+    ? JSON.parse(readFileSync(testsFile, 'utf8'))
+    : { status: 'not_run', added: [] }
+  // Only the tests that passed are still in the working tree; anything else was undone.
+  restoreProtected('review')
+  let commitSha
+  if (tests.status === 'passed' && tests.added.length) {
+    const files = tests.added.map((t) => t.file)
+    git('add', '--', ...files)
+    const subject = `${'Test: '}cover PR #${task.pr} (${tests.added.reduce((n, t) => n + t.cases, 0)} cases)`
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=tapthrough[bot]',
+        '-c',
+        'user.email=tapthrough[bot]@users.noreply.github.com',
+        'commit',
+        '--quiet',
+        '-m',
+        subject.slice(0, 72),
+        '-m',
+        `Tests Claude added while reviewing PR #${task.pr} through Tapthrough. They ran and passed.\n\nCo-Authored-By: Claude <noreply@anthropic.com>`,
+      ],
+      { stdio: 'inherit' },
+    )
+    const basic = Buffer.from(`x-access-token:${process.env.PUSH_TOKEN}`).toString('base64')
+    try {
+      execFileSync(
+        'git',
+        [
+          '-c',
+          `http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}`,
+          'push',
+          'origin',
+          `HEAD:refs/heads/${task.headRef}`,
+        ],
+        { stdio: 'inherit' },
+      )
+      commitSha = git('rev-parse', 'HEAD')
+      console.log(`Pushed tests in ${commitSha.slice(0, 7)} to ${task.headRef}.`)
+    } catch {
+      // Someone pushed while the review ran; the next push gets its own review.
+      tests = {
+        status: 'not_run',
+        added: [],
+        output: 'The branch moved on while Claude was reviewing, so its tests were not pushed.',
+      }
+    }
+  }
+  await report({
+    outcome: 'reviewed',
+    summary: verdict.summary || 'Reviewed.',
+    ...(commitSha ? { commitSha } : {}),
+    review: { findings: verdict.findings, tests },
+  })
+}
+
+const steps = { claim, prepare, install, agent, verify, finish }
 const step = steps[process.argv[2]]
 if (!step) {
   console.error(`Unknown step ${process.argv[2]}`)
