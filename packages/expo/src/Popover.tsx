@@ -371,7 +371,7 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
     lead = 'Nothing to check on this PR. Look around the app, report anything off, then approve it.'
   } else if (finished) {
     lead = failed
-      ? `Review done. ${failed} step${failed === 1 ? '' : 's'} failed, and your reports are on PR #${checklist.pr}.`
+      ? `${failed} step${failed === 1 ? '' : 's'} failed, and your reports are on PR #${checklist.pr}. Fixed now? Check again and tap Pass.`
       : `Everything passed. Approve PR #${checklist.pr} to tell the team it’s good to merge.`
   } else if (done === 0 && recheck.length === 0) {
     lead = `Check ${total === 1 ? 'this' : `these ${total}`} on PR #${checklist.pr}. Each one sets the app up and walks you through it.`
@@ -406,6 +406,21 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
         title={`${started ? 'Continue' : done === 0 ? 'Start' : 'Next'}: ${next.title}`}
         onPress={() => p.onNav(openScenario(next, results), 'forward')}
       />
+    )
+  } else if (failed > 0) {
+    const scenario = scenarios.find((s) => firstFailed(s, results) >= 0)
+    footer = scenario ? (
+      <Capsule
+        title="Check Failed Step Again"
+        onPress={() =>
+          p.onNav(
+            { view: 'step', key: scenario.key, index: firstFailed(scenario, results) },
+            'forward',
+          )
+        }
+      />
+    ) : (
+      <Capsule title="Done" onPress={p.onClose} />
     )
   } else {
     footer = <Capsule title="Done" kind={others.length ? 'plain' : undefined} onPress={p.onClose} />
@@ -1176,6 +1191,11 @@ function prsView(p: ReviewPopoverProps, colors: Colors): Screen {
   }
 }
 
+/** The first failed step's position in a scenario, or -1. */
+function firstFailed(scenario: ChecklistScenario, results: Results): number {
+  return scenario.steps.findIndex((step) => results[stepId(scenario.key, step.index)] === 'fail')
+}
+
 /** A scenario not started opens its brief; one in progress opens its next step. */
 function openScenario(scenario: ChecklistScenario, results: Results): Nav {
   const progress = scenarioProgress(scenario, results)
@@ -1316,6 +1336,11 @@ function stepView(
       <>
         <Text style={[text.headline, { color: colors.label }]}>{step.action}</Text>
         <Text style={[text.subhead, { color: colors.secondary }]}>Expect: {step.expect}</Text>
+        {result === 'fail' && !step.result?.carriedFrom ? (
+          <Text style={[text.footnote, { color: colors.secondary }]}>
+            You failed this step. If it works now, tap Pass: the PR shows the newest result.
+          </Text>
+        ) : null}
         {step.result?.carriedFrom && result === step.result.result ? (
           <Text style={[text.footnote, { color: colors.secondary }]}>
             {`${step.result.result === 'pass' ? 'Passed' : step.result.result === 'fail' ? 'Failed' : 'Skipped'} on ${step.result.carriedFrom.slice(0, 7)}. Kept because later pushes didn’t change this screen.`}
@@ -1390,46 +1415,80 @@ function recheckView(p: ReviewPopoverProps, item: RecheckItem, colors: Colors): 
 }
 
 function doneView(p: ReviewPopoverProps, entry: Entry, colors: Colors): Screen {
-  const progress = entry.scenario ? scenarioProgress(entry.scenario, p.results) : null
+  const scenario = entry.scenario
+  const progress = scenario ? scenarioProgress(scenario, p.results) : null
   const next = nextOpenScenario(p.checklist, p.results, entry.key)
+  const failedAt = scenario ? firstFailed(scenario, p.results) : -1
+  const onward = next ? (
+    <Capsule
+      title={`Next: ${next.title}`}
+      kind={failedAt >= 0 ? 'plain' : undefined}
+      onPress={() => p.onNav(openScenario(next, p.results), 'forward')}
+    />
+  ) : (
+    <Capsule
+      title="Finish Review"
+      kind={failedAt >= 0 ? 'plain' : undefined}
+      onPress={() => p.onNav({ view: 'list' }, 'back')}
+    />
+  )
   return {
     title: entry.title,
     subtitle: 'Checked',
     back: true,
     body: (
-      <View style={styles.done}>
-        <Mark kind={progress?.failed ? 'fail' : 'pass'} colors={colors} size={52} />
-        <Text style={[text.title2, { color: colors.label }]}>
-          {progress?.failed ? `${progress.failed} failed` : 'All passed'}
-        </Text>
-        {progress ? (
-          <Text style={[text.subhead, { color: colors.secondary }]}>
-            {`${progress.passed} of ${progress.total} passed`}
+      <>
+        <View style={styles.done}>
+          <Mark kind={progress?.failed ? 'fail' : 'pass'} colors={colors} size={52} />
+          <Text style={[text.title2, { color: colors.label }]}>
+            {progress?.failed ? `${progress.failed} failed` : 'All passed'}
           </Text>
-        ) : null}
-      </View>
+          {progress ? (
+            <Text style={[text.subhead, { color: colors.secondary }]}>
+              {`${progress.passed} of ${progress.total} passed`}
+            </Text>
+          ) : null}
+        </View>
+        {scenario?.steps.map((step, index) => {
+          const result = p.results[stepId(scenario.key, step.index)]
+          return (
+            <Row
+              key={step.index}
+              colors={colors}
+              lead={
+                result === 'pass' || result === 'fail' ? (
+                  <Mark kind={result} colors={colors} />
+                ) : (
+                  <Badge icon="arrow.right" colors={colors} />
+                )
+              }
+              title={step.action}
+              subtitle={
+                result === 'fail'
+                  ? 'Failed · tap to check it again'
+                  : result === 'pass'
+                    ? 'Passed'
+                    : 'Not checked'
+              }
+              onPress={() => p.onNav({ view: 'step', key: scenario.key, index }, 'forward')}
+            />
+          )
+        })}
+      </>
     ),
     footer: (
       <>
-        {next ? (
+        {scenario && failedAt >= 0 ? (
           <Capsule
-            title={`Next: ${next.title}`}
-            onPress={() => p.onNav(openScenario(next, p.results), 'forward')}
+            title="Check Failed Step Again"
+            onPress={() => p.onNav({ view: 'step', key: scenario.key, index: failedAt }, 'forward')}
           />
-        ) : (
-          <Capsule title="Finish Review" onPress={() => p.onNav({ view: 'list' }, 'back')} />
-        )}
-        <Capsule
-          title="Back to List"
-          kind="plain"
-          onPress={() => p.onNav({ view: 'list' }, 'back')}
-        />
+        ) : null}
+        {onward}
       </>
     ),
   }
 }
-
-/* --------------------------------- pieces --------------------------------- */
 
 function reportedBy(item: RecheckItem) {
   return [item.reporter, `reported on ${item.sha.slice(0, 7)}`].filter(Boolean).join(' · ')

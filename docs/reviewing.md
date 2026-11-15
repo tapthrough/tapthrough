@@ -43,6 +43,8 @@ button to fill the screen. Tap the Review button again (now an ✕) to close it.
 
 Also in the panel:
 
+- **Change a result.** Failed a step that works after all, or after a fix? Open the item (or tap **Check
+  Failed Step Again**), go to the step and tap **Pass**. The PR shows the newest result.
 - **Approve.** When every step passed, or the PR has nothing to check, the main button is **Approve PR**.
   It labels the PR `tapthrough:approved` and comments who approved it; a PR Claude built from an idea
   can also merge, if the repo allows. If a step failed, there's no Approve: your reports are on the PR.
