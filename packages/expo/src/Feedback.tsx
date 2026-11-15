@@ -499,6 +499,8 @@ export function ReportButton({
     if (checklist) {
       setPhase('open')
       void refresh()
+      // Ready for "Review another PR" once this one is done.
+      if (pulls === null) void showPulls()
       return
     }
     setPhase('loading')

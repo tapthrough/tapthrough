@@ -26,8 +26,9 @@ ideas are waiting on you.
 The button opens a panel over the app with what this PR needs checked. Tap the expand
 button to fill the screen. Tap the Review button again (now an ✕) to close it.
 
-1. **Pick something to check.** Each item says why it's on the list, like "This PR changed this screen."
-   The top shows how far you are, like **1 of 3 checked**.
+1. **Tap the big button.** The panel lists what this PR needs checked and always has one main button for
+   what's next: **Start**, **Continue** or **Next**, with the item's name. The top shows how far you are,
+   like **1 of 3 checked**. You can also tap any item to do it out of order.
 2. **Set up.** The item shows what setup does (signs you in as a test user, adds test data, opens the
    screen) and its steps. Tap **Set Up and Start** and the app gets itself ready without leaving. Already
    where you need to be? Tap **Skip Setup**. If setup can't run, the panel lists the same steps to do by
@@ -42,9 +43,10 @@ button to fill the screen. Tap the Review button again (now an ✕) to close it.
 
 Also in the panel:
 
-- **Go to Another Screen.** The app's other scenarios, the ones this PR doesn't list. Tap one to open
-  that screen, set up with its test data when your app has a seed hook, and check nothing else broke.
-  Report anything off with the Review button as usual.
+- **When you're done.** After the last item, **Finish Review** shows a summary (everything passed, or
+  how many steps failed) and a list of other open PRs to review next. Tap one to switch to its build.
+- **Ideas waiting on you.** Ideas that need an answer or are ready to try show up here. Others stay out of
+  the way.
 - **Re-check earlier reports.** After a new push, reports from before show up first. Mark them **Fixed** or
   **Still broken**.
 - **Report Issue.** For anything outside the plan: write what's wrong, and the screenshot comes
