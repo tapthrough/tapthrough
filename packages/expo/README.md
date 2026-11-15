@@ -87,12 +87,29 @@ const newEditor = useFlagOverride('newEditor') ?? flags.newEditor
 
 Outside React, use `getFlagOverride(name)`.
 
+### 5. Notify reviewers about new PRs (optional)
+
+With [`expo-notifications`](https://docs.expo.dev/versions/latest/sdk/notifications/) installed (and
+its config plugin, which sets up push for your builds), pass the adapter:
+
+```tsx
+import { tapthroughNotifications } from '@tapthrough/expo/notifications'
+
+<Tapthrough auth={auth} notifications={tapthroughNotifications}>
+```
+
+Nothing is asked at launch. When a reviewer finishes a PR, the Review panel offers **Notify Me About New
+PRs**; after that, each PR's first preview sends "PR #N is ready to review" to their phone. Tapping it
+opens that PR's build, or its page when the installed build can't run it. Notifications go through
+Expo's push service, so your EAS project needs push credentials (`eas credentials`).
+
 ## API
 
 | Export | Does |
 | --- | --- |
 | `<Tapthrough auth reset? seedHookUrl? enabled?>` | Runs the launch sequence and shows a loading screen, or an error card the reviewer can dismiss. `seedHookUrl` and `enabled` override the plugin. |
 | `redirectSystemPath`, `handleLaunchPath(path)` | For `+native-intent`, as above. |
+| `tapthroughNotifications` from `@tapthrough/expo/notifications` | "PR ready to review" notifications, as above. Needs `expo-notifications`. |
 | `supabaseAuth(client)` from `@tapthrough/expo/supabase` | Logs in with the `{ access_token, refresh_token }` that `createTestUser` returns. |
 | `resetQueryClient(client)`, `resetStorage(storage, keys)`, `resetStores(stores)` | Reset targets for TanStack Query, AsyncStorage or MMKV, and Zustand. A reset target is any `() => void \| Promise<void>`. |
 | `useFlagOverride(name)`, `getFlagOverride(name)`, `getFlagOverrides()` | The scenario's flag values. `undefined` means the scenario leaves that flag alone. |

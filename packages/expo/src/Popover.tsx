@@ -107,6 +107,9 @@ export interface ReviewPopoverProps {
   ideaBusy: string | null
   /** What Approve PR did, once it has. */
   approveNote: string | null
+  /** "PR ready" notifications on this device; null when the app doesn't offer them. */
+  push: 'on' | 'off' | null
+  onEnablePush: () => void
   onApprovePr: () => void
   /** Open PRs with previews; null until loaded. */
   pulls: OpenPr[] | null
@@ -491,6 +494,15 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
             ) : (
               others.map((pr) => <PullRow key={pr.number} pr={pr} p={p} colors={colors} />)
             )}
+            {p.push === 'off' ? (
+              <Row
+                colors={colors}
+                lead={<Badge icon="bell" colors={colors} />}
+                title="Notify Me About New PRs"
+                subtitle="Get a notification when a PR is ready to review"
+                onPress={p.onEnablePush}
+              />
+            ) : null}
           </>
         ) : null}
         <ReviewerName name={p.name} onChange={p.onNameChange} colors={colors} />

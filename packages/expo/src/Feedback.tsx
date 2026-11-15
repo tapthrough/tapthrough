@@ -55,12 +55,14 @@ import {
   ideaAction,
   ideasNeedingYou,
   isMoving,
+  type NotificationsAdapter,
   newlyWaiting,
   type OpenPr,
   type Report,
   replyToIdea,
   reportsNeedingYou,
   sendStaffReport,
+  setPrNotifications,
   submitIdea,
 } from './core/ideas.js'
 import {
@@ -214,9 +216,12 @@ export function ReportButton({
   apiUrl,
   canSetUp,
   appKey,
+  notifications,
 }: {
   apiUrl: string
   canSetUp: boolean
+  /** Set when the app passes `notifications` to `<Tapthrough>`. */
+  notifications?: NotificationsAdapter | undefined
   /** Set on staging and TestFlight builds: feedback works outside PR previews. */
   appKey?: string | undefined
 }) {
@@ -248,6 +253,9 @@ export function ReportButton({
   const [reports, setReports] = useState<Report[]>([])
   const [ideaBusy, setIdeaBusy] = useState<string | null>(null)
   const [approveNote, setApproveNote] = useState<string | null>(null)
+  /** PR notifications on this device: null until known, or when the app doesn't offer them. */
+  const [push, setPush] = useState<'on' | 'off' | null>(null)
+  const pushSynced = useRef(false)
   const [pulls, setPulls] = useState<OpenPr[] | null>(null)
   const [composerKind, setComposerKind] = useState<'issue' | 'idea'>('issue')
   const launch = useLaunchState()
@@ -506,6 +514,7 @@ export function ReportButton({
       void refresh()
       // Ready for "Review another PR" once this one is done.
       if (pulls === null) void showPulls()
+      void syncPush()
       return
     }
     setPhase('loading')
@@ -665,6 +674,68 @@ export function ReportButton({
     setPulls((list) => list?.map((pr) => (pr.current ? { ...pr, approved: true } : pr)) ?? list)
   }
 
+  /** Once per session: re-register a device that allows notifications, so its build stays current. */
+  async function syncPush() {
+    if (!notifications || !preview || !platform || pushSynced.current) return
+    pushSynced.current = true
+    try {
+      if (!(await notifications.granted())) {
+        setPush('off')
+        return
+      }
+      const token = await notifications.enable(preview.projectId)
+      if (!token) return setPush('off')
+      const result = await setPrNotifications(
+        {
+          preview,
+          platform,
+          token,
+          enabled: true,
+          ...(rememberedName ? { by: rememberedName } : {}),
+        },
+        { apiUrl },
+      )
+      setPush(result.ok ? 'on' : 'off')
+    } catch {
+      setPush(null)
+    }
+  }
+
+  /** Notify Me About New PRs, from the panel. */
+  async function enablePush() {
+    if (!notifications || !preview || !platform) return
+    haptics.selection()
+    rememberName()
+    let token: string | null = null
+    try {
+      token = await notifications.enable(preview.projectId)
+    } catch {
+      token = null
+    }
+    if (!token) {
+      haptics.warning()
+      setError('Notifications are off for this app. Turn them on in Settings, then try again.')
+      return
+    }
+    const result = await setPrNotifications(
+      {
+        preview,
+        platform,
+        token,
+        enabled: true,
+        ...(rememberedName ? { by: rememberedName } : {}),
+      },
+      { apiUrl },
+    )
+    if (!result.ok) {
+      haptics.warning()
+      setError(result.message)
+      return
+    }
+    haptics.success()
+    setPush('on')
+  }
+
   async function showPulls() {
     if (!preview || !platform) return
     setPulls(null)
@@ -759,6 +830,8 @@ export function ReportButton({
           onFixReport={(id) => void fixBug(id)}
           ideaBusy={ideaBusy}
           approveNote={approveNote}
+          push={push}
+          onEnablePush={() => void enablePush()}
           onApprovePr={() => void approveThisPr()}
           pulls={pulls}
           onShowPulls={() => void showPulls()}

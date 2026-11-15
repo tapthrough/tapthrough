@@ -48,6 +48,8 @@ Also in the panel:
   can also merge, if the repo allows. If a step failed, there's no Approve: your reports are on the PR.
 - **Next PR.** Once a PR is approved or reviewed, the panel lists other open PRs that nobody has
   approved yet, with how many items each has to check. Tap one to switch to its build.
+- **Notify Me About New PRs.** Shown after a review when the app supports it. Turn it on and your phone
+  gets "PR #N is ready to review" when each new PR's preview is up; tap it to open that PR.
 - **Ideas waiting on you.** Ideas that need an answer or are ready to try show up here. Others stay out of
   the way.
 - **Re-check earlier reports.** After a new push, reports from before show up first. Mark them **Fixed** or

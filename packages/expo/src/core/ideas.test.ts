@@ -12,11 +12,13 @@ import {
   isMoving,
   newlyWaiting,
   type OpenPr,
+  prReadyUrl,
   prsToReview,
   type Report,
   replyToIdea,
   reportsNeedingYou,
   sendStaffReport,
+  setPrNotifications,
   stepTime,
   submitIdea,
 } from './ideas.js'
@@ -281,5 +283,31 @@ describe('approving a PR', () => {
       ),
     ).toEqual([3])
     expect(prsToReview(null)).toEqual([])
+  })
+})
+
+describe('PR ready notifications', () => {
+  it('opens only Tapthrough PR-ready notifications', () => {
+    expect(prReadyUrl({ tapthrough: 'pr_ready', url: 'exp+app://x' })).toBe('exp+app://x')
+    expect(prReadyUrl({ url: 'exp+app://x' })).toBeNull()
+    expect(prReadyUrl(undefined)).toBeNull()
+  })
+
+  it('registers the device token with the build credential', async () => {
+    const fetch = respond(200, { enabled: true })
+    const result = await setPrNotifications(
+      { preview, platform: 'ios', token: 'ExponentPushToken[abc]', enabled: true, by: 'Jo' },
+      { apiUrl, fetch },
+    )
+    expect(result).toEqual({ ok: true, enabled: true })
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(String(url)).toContain('/api/v1/push-tokens')
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      updateGroupId: 'g1',
+      projectId: 'p1',
+      token: 'ExponentPushToken[abc]',
+      enabled: true,
+      by: 'Jo',
+    })
   })
 })

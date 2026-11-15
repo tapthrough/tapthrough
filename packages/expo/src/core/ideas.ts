@@ -485,3 +485,48 @@ export function sendStaffReport(
         : undefined,
   )
 }
+
+/**
+ * Push notifications, from `@tapthrough/expo/notifications`. Kept out of the
+ * main entry so apps without `expo-notifications` don't need it.
+ */
+export interface NotificationsAdapter {
+  /** Whether this device already allows notifications. */
+  granted(): Promise<boolean>
+  /** Asks permission if needed, then returns the Expo push token, or null if declined. */
+  enable(projectId: string): Promise<string | null>
+  /** Calls back with each tapped notification's data, including the one that launched the app. */
+  onOpen(handler: (data: Record<string, unknown>) => void): () => void
+}
+
+/** The PR build a tapped "PR ready" notification opens, or null for any other notification. */
+export function prReadyUrl(data: Record<string, unknown> | undefined): string | null {
+  return data?.tapthrough === 'pr_ready' && typeof data.url === 'string' ? data.url : null
+}
+
+/** Turns "PR ready to review" notifications on or off for this device. Never throws. */
+export function setPrNotifications(
+  input: {
+    preview: PreviewContext
+    platform: Platform
+    token: string
+    enabled: boolean
+    by?: string
+  },
+  options: Options,
+) {
+  return call(
+    options,
+    '/api/v1/push-tokens',
+    {
+      method: 'POST',
+      body: {
+        ...credential({ kind: 'build', preview: input.preview }, input.platform),
+        token: input.token,
+        enabled: input.enabled,
+        ...(input.by ? { by: input.by } : {}),
+      },
+    },
+    (body) => (typeof body.enabled === 'boolean' ? { enabled: body.enabled } : undefined),
+  )
+}

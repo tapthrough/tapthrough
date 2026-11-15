@@ -4,6 +4,7 @@ import { type Href, router, useRootNavigationState } from 'expo-router'
 import { type ReactNode, useEffect } from 'react'
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import { setFlagOverrides } from './core/flags.js'
+import { type NotificationsAdapter, prReadyUrl } from './core/ideas.js'
 import type { AuthAdapter, ResetTarget } from './core/launch.js'
 import { ReportButton } from './Feedback.js'
 import { useLaunchState } from './hooks.js'
@@ -26,6 +27,11 @@ export interface TapthroughProps {
   feedback?: boolean
   /** Overrides the config plugin's `apiUrl`, where reports are sent. */
   apiUrl?: string
+  /**
+   * "PR ready to review" notifications: `tapthroughNotifications` from
+   * `@tapthrough/expo/notifications`. Reviewers opt in from the Review panel.
+   */
+  notifications?: NotificationsAdapter
 }
 
 /** For apps without login: the seeded session is ignored. */
@@ -44,6 +50,7 @@ export function Tapthrough({
   enabled,
   feedback = true,
   apiUrl,
+  notifications,
 }: TapthroughProps) {
   const config = pluginConfig()
   const isEnabled = enabled ?? config.enabled
@@ -81,6 +88,15 @@ export function Tapthrough({
     return () => controller.setNavigator(undefined)
   }, [navigationReady])
 
+  // A tapped "PR ready" notification opens that PR's build (or its page).
+  useEffect(() => {
+    if (!isEnabled || !notifications) return
+    return notifications.onOpen((data) => {
+      const url = prReadyUrl(data)
+      if (url) void Linking.openURL(url)
+    })
+  }, [isEnabled, notifications])
+
   // Fallback for apps without `+native-intent`; tokens are de-duplicated.
   useEffect(() => {
     if (!isEnabled) return
@@ -103,6 +119,7 @@ export function Tapthrough({
           apiUrl={apiUrl ?? config.apiUrl}
           canSetUp={Boolean(hookUrl)}
           appKey={config.staff ? config.appKey : undefined}
+          notifications={notifications}
         />
       ) : null}
       {isEnabled ? <LaunchOverlay /> : null}
