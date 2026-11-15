@@ -46,7 +46,8 @@ export type Nav =
   /** `index` is the step's position in the scenario's `steps`. */
   | { view: 'step'; key: string; index: number }
   | { view: 'done'; key: string }
-  | { view: 'explore'; key: string }
+  /** The repo's other scenarios, to jump to their screen. */
+  | { view: 'screens' }
   | { view: 'recheck'; id: string }
   | { view: 'idea'; id: string }
   /** A bug sent from this staging or TestFlight app, and Claude's fix. */
@@ -143,7 +144,7 @@ function entryFor(checklist: Checklist, key: string): Entry | undefined {
 }
 
 const navKey = (nav: Nav) =>
-  nav.view === 'list' || nav.view === 'prs'
+  nav.view === 'list' || nav.view === 'prs' || nav.view === 'screens'
     ? nav.view
     : nav.view === 'recheck' || nav.view === 'idea' || nav.view === 'report'
       ? `${nav.view}:${nav.id}`
@@ -288,6 +289,7 @@ function renderView(p: ReviewPopoverProps, colors: Colors): Screen {
   const { nav, checklist } = p
   if (nav.view === 'list') return listView(p, colors)
   if (nav.view === 'prs') return prsView(p, colors)
+  if (nav.view === 'screens') return screensView(p, colors)
   if (nav.view === 'idea') {
     const idea = p.ideas.find((i) => i.id === nav.id)
     return idea ? ideaView(p, idea, colors) : listView(p, colors)
@@ -313,8 +315,6 @@ function renderView(p: ReviewPopoverProps, colors: Colors): Screen {
         : listView(p, colors)
     case 'done':
       return doneView(p, entry, colors)
-    case 'explore':
-      return exploreView(p, entry, colors)
   }
 }
 
@@ -375,26 +375,6 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
             />
           )
         })}
-        {others.length ? (
-          <>
-            <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>
-              Other states
-            </Text>
-            {others.map((state) => (
-              <Row
-                key={state.key}
-                colors={colors}
-                lead={<Badge icon="arrow.right.circle" colors={colors} />}
-                title={state.title}
-                subtitle={
-                  plain(state.why) ??
-                  (p.canSetUp && state.setup?.length ? 'Sets itself up' : 'Look around')
-                }
-                onPress={() => p.onNav({ view: 'brief', key: state.key }, 'forward')}
-              />
-            ))}
-          </>
-        ) : null}
         {p.ideas.length ? (
           <>
             <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>Ideas</Text>
@@ -446,6 +426,15 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
               />
             ))}
           </>
+        ) : null}
+        {others.length ? (
+          <Row
+            colors={colors}
+            lead={<Badge icon="arrow.right.circle" colors={colors} />}
+            title="Go to Another Screen"
+            subtitle={`${others.length} more in this app, not on this PR’s list`}
+            onPress={() => p.onNav({ view: 'screens' }, 'forward')}
+          />
         ) : null}
         {p.staff ? (
           p.ideas.length || p.reports.length ? null : (
@@ -1028,10 +1017,7 @@ function briefView(p: ReviewPopoverProps, entry: Entry, colors: Colors): Screen 
         <Capsule title="Skip Setup" kind="plain" onPress={() => p.onStart(entry.key)} />
       </>
     ) : (
-      <Capsule
-        title={manual ? 'I’m Ready' : entry.other ? 'Look Around' : 'Start'}
-        onPress={() => p.onStart(entry.key)}
-      />
+      <Capsule title={entry.other ? 'Open Screen' : 'Start'} onPress={() => p.onStart(entry.key)} />
     ),
   }
 }
@@ -1207,24 +1193,39 @@ function doneView(p: ReviewPopoverProps, entry: Entry, colors: Colors): Screen {
   }
 }
 
-function exploreView(p: ReviewPopoverProps, entry: Entry, colors: Colors): Screen {
+function screensView(p: ReviewPopoverProps, colors: Colors): Screen {
+  const others = otherStates(p.checklist)
   return {
-    title: entry.title,
-    subtitle: 'Ready to look around',
+    title: 'Go to Another Screen',
+    subtitle: 'Not part of this PR’s checklist',
     back: true,
     body: (
-      <Text style={[text.subhead, { color: colors.label }]}>
-        The app is in this state now. Look around, and report anything that seems off.
-      </Text>
-    ),
-    footer: (
       <>
-        <Capsule title="Report Something" onPress={p.onReportOther} />
-        <Capsule
-          title="Back to List"
-          kind="plain"
-          onPress={() => p.onNav({ view: 'list' }, 'back')}
-        />
+        <Text style={[text.subhead, { color: colors.secondary }]}>
+          Opens a screen this PR doesn’t list, to check nothing else broke. Use the Review button to
+          report anything off.
+        </Text>
+        {others.map((state) => {
+          const auto = p.canSetUp && Boolean(state.setup?.length)
+          return (
+            <Row
+              key={state.key}
+              colors={colors}
+              lead={<Badge icon="arrow.right.circle" colors={colors} />}
+              title={state.title}
+              subtitle={
+                auto ? 'Sets itself up' : state.setup?.length ? 'Set up by hand' : state.routePath
+              }
+              onPress={() =>
+                auto
+                  ? p.onSetUp(state.key)
+                  : state.setup?.length
+                    ? p.onNav({ view: 'brief', key: state.key }, 'forward')
+                    : p.onStart(state.key)
+              }
+            />
+          )
+        })}
       </>
     ),
   }

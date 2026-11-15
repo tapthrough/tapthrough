@@ -1,5 +1,5 @@
 import Constants from 'expo-constants'
-import { usePathname } from 'expo-router'
+import { type Href, router, usePathname } from 'expo-router'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
@@ -62,7 +62,14 @@ import {
   sendStaffReport,
   submitIdea,
 } from './core/ideas.js'
-import { nextOpenStep, popoverPlacement, type Results, resultsFrom, stepId } from './core/review.js'
+import {
+  nextOpenStep,
+  openableRoute,
+  popoverPlacement,
+  type Results,
+  resultsFrom,
+  stepId,
+} from './core/review.js'
 import { useLaunchState } from './hooks.js'
 import { Overlay, useBackPress } from './Overlay.js'
 import {
@@ -355,7 +362,8 @@ export function ReportButton({
     const key = setup.key
     const timer = setTimeout(() => {
       setSetup(null)
-      begin(key)
+      // The launch link already opened the screen.
+      begin(key, { navigate: false })
       void refresh()
     }, 700)
     return () => clearTimeout(timer)
@@ -373,11 +381,21 @@ export function ReportButton({
     rememberedName = name.trim()
   }
 
-  /** Starts a scenario's steps where they're left off, or explores another state. */
-  function begin(key: string) {
+  /**
+   * Starts a scenario's steps where they're left off, or opens another state's
+   * screen and gets out of the way. Without a seed hook (or when setup is
+   * skipped) nothing has moved the app yet, so this goes to the scenario's screen.
+   */
+  function begin(key: string, opts: { navigate?: boolean } = { navigate: true }) {
     const scenario = checklist?.scenarios.find((s) => s.key === key)
+    const path = scenario?.routePath ?? checklist?.library?.find((s) => s.key === key)?.routePath
+    if (opts.navigate && path) {
+      const href = openableRoute(path)
+      if (href && href !== pathname) router.push(href as Href)
+    }
     if (!scenario?.steps.length) {
-      go({ view: 'explore', key })
+      go({ view: 'list' }, 'back')
+      close()
       return
     }
     const index = nextOpenStep(scenario, results)

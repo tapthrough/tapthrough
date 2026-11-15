@@ -31,7 +31,7 @@ button to fill the screen. Tap the Review button again (now an ✕) to close it.
 2. **Set up.** The item shows what setup does (signs you in as a test user, adds test data, opens the
    screen) and its steps. Tap **Set Up and Start** and the app gets itself ready without leaving. Already
    where you need to be? Tap **Skip Setup**. If setup can't run, the panel lists the same steps to do by
-   hand, then **I'm Ready**.
+   hand, then **Start** opens the screen.
 3. **Pass or Fail each step.** One step at a time. Pass is recorded right away. Fail takes a screenshot of
    the app and lets you say what happened.
 4. **Send.** The report shows the step you were on and what was expected. Tap the screenshot to leave it
@@ -42,8 +42,9 @@ button to fill the screen. Tap the Review button again (now an ✕) to close it.
 
 Also in the panel:
 
-- **Other states.** Every scenario in the app, not just the ones this PR touched, so you can jump to an
-  empty account or a viewer role and look around.
+- **Go to Another Screen.** The app's other scenarios, the ones this PR doesn't list. Tap one to open
+  that screen, set up with its test data when your app has a seed hook, and check nothing else broke.
+  Report anything off with the Review button as usual.
 - **Re-check earlier reports.** After a new push, reports from before show up first. Mark them **Fixed** or
   **Still broken**.
 - **Report Issue.** For anything outside the plan: write what's wrong, and the screenshot comes

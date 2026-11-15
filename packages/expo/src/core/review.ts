@@ -78,6 +78,19 @@ export function otherStates(checklist: Checklist): LibraryEntry[] {
   return (checklist.library ?? []).filter((entry) => !entry.picked && !planned.has(entry.key))
 }
 
+/**
+ * A route the app can go to without seeded data: no `[param]` segments to fill
+ * in. Expo Router groups like `(employer)` aren't in the URL, so they're dropped.
+ */
+export function openableRoute(routePath: string): string | null {
+  if (routePath.includes('[')) return null
+  const path = routePath
+    .split('/')
+    .filter((part) => part && !/^\(.*\)$/.test(part))
+    .join('/')
+  return `/${path}`
+}
+
 export interface Placement {
   side: 'left' | 'right'
   /** Distance from the screen's `side` edge. */

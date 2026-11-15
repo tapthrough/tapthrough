@@ -3,6 +3,7 @@ import type { Checklist, ChecklistScenario, SetupLine } from './feedback.js'
 import {
   nextOpenScenario,
   nextOpenStep,
+  openableRoute,
   otherStates,
   popoverPlacement,
   resultsFrom,
@@ -129,5 +130,17 @@ describe('setupLineStates', () => {
     expect(setupLineStates(lines, 'signing_in')).toEqual(['active', 'done', 'waiting', 'waiting'])
     expect(setupLineStates(lines, 'opening')).toEqual(['done', 'done', 'done', 'active'])
     expect(setupLineStates(lines, 'done')).toEqual(['done', 'done', 'done', 'done'])
+  })
+})
+
+describe('openableRoute', () => {
+  it('opens plain routes and drops Expo Router groups', () => {
+    expect(openableRoute('/jobs')).toBe('/jobs')
+    expect(openableRoute('/(employer)/jobs/new')).toBe('/jobs/new')
+    expect(openableRoute('/')).toBe('/')
+  })
+
+  it('skips routes that need an ID from seeded data', () => {
+    expect(openableRoute('/jobs/[jobId]')).toBeNull()
   })
 })
