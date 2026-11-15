@@ -21,7 +21,14 @@ import type {
   SetupLine,
 } from './core/feedback.js'
 import { resetMessage } from './core/feedback.js'
-import { type Idea, type IdeaStage, type OpenPr, type Report, stepTime } from './core/ideas.js'
+import {
+  type Idea,
+  type IdeaStage,
+  type OpenPr,
+  prsToReview,
+  type Report,
+  stepTime,
+} from './core/ideas.js'
 import {
   nextOpenScenario,
   type Placement,
@@ -98,6 +105,9 @@ export interface ReviewPopoverProps {
   onFixReport: (id: string) => void
   /** The idea or report whose request is in flight, to show a spinner on its button. */
   ideaBusy: string | null
+  /** What Approve PR did, once it has. */
+  approveNote: string | null
+  onApprovePr: () => void
   /** Open PRs with previews; null until loaded. */
   pulls: OpenPr[] | null
   onShowPulls: () => void
@@ -347,15 +357,19 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
     (idea) =>
       idea.status === 'needs_answers' || idea.status === 'ready_to_test' || Boolean(idea.warning),
   )
-  const others = (p.pulls ?? []).filter((pr) => !pr.current)
+  const others = prsToReview(p.pulls)
+  const approved = Boolean(p.pulls?.find((pr) => pr.current)?.approved)
+  const canApprove = !approved && (nothingPlanned || (finished && failed === 0))
 
   let lead: string
-  if (nothingPlanned) {
-    lead = 'This PR has no checklist. Look around the app and report anything that seems off.'
+  if (approved) {
+    lead = p.approveNote ?? `PR #${checklist.pr} is approved.`
+  } else if (nothingPlanned) {
+    lead = 'Nothing to check on this PR. Look around the app, report anything off, then approve it.'
   } else if (finished) {
     lead = failed
       ? `Review done. ${failed} step${failed === 1 ? '' : 's'} failed, and your reports are on PR #${checklist.pr}.`
-      : `Review done. Everything passed, and your results are on PR #${checklist.pr}.`
+      : `Everything passed. Approve PR #${checklist.pr} to tell the team it’s good to merge.`
   } else if (done === 0 && recheck.length === 0) {
     lead = `Check ${total === 1 ? 'this' : `these ${total}`} on PR #${checklist.pr}. Each one sets the app up and walks you through it.`
   } else {
@@ -364,7 +378,17 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
   }
 
   let footer: ReactNode
-  if (recheck[0]) {
+  if (canApprove) {
+    footer = (
+      <Capsule
+        title={`Approve PR #${checklist.pr}`}
+        busy={p.ideaBusy === 'approve-pr'}
+        onPress={p.onApprovePr}
+      />
+    )
+  } else if (approved) {
+    footer = <Capsule title="Done" kind={others.length ? 'plain' : undefined} onPress={p.onClose} />
+  } else if (recheck[0]) {
     const item = recheck[0]
     footer = (
       <Capsule
@@ -386,52 +410,63 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
 
   return {
     title: `PR #${checklist.pr}`,
-    subtitle: nothingPlanned
-      ? 'Nothing to check'
-      : finished
-        ? failed
-          ? `${failed} failed`
-          : 'All passed'
-        : `${done} of ${total} checked`,
+    subtitle: approved
+      ? 'Approved'
+      : nothingPlanned
+        ? 'Nothing to check'
+        : finished
+          ? failed
+            ? `${failed} failed`
+            : 'All passed'
+          : `${done} of ${total} checked`,
     body: (
       <>
         {checklist.newerBuild ? <NewerRow build={checklist.newerBuild} colors={colors} /> : null}
         {checklist.reset ? <ResetRow reset={checklist.reset} colors={colors} /> : null}
         <Text style={[text.subhead, { color: colors.label }]}>{lead}</Text>
-        {(checklist.recheck ?? []).map((item) => {
-          const state = p.rechecked[item.id] ?? (item.stillBrokenHere ? 'still_broken' : undefined)
-          return (
-            <Row
-              key={item.id}
-              colors={colors}
-              lead={
-                state ? (
-                  <Mark kind={state === 'fixed' ? 'pass' : 'fail'} colors={colors} />
-                ) : (
-                  <Badge icon="arrow.clockwise" colors={colors} />
-                )
-              }
-              title={`Re-check: ${item.excerpt}`}
-              subtitle={
-                state === 'fixed' ? 'Fixed here' : state ? 'Still broken here' : reportedBy(item)
-              }
-              onPress={() => p.onNav({ view: 'recheck', id: item.id }, 'forward')}
-            />
-          )
-        })}
-        {scenarios.map((scenario) => {
-          const progress = scenarioProgress(scenario, results)
-          return (
-            <Row
-              key={scenario.key}
-              colors={colors}
-              lead={<ProgressMark progress={progress} colors={colors} />}
-              title={scenario.title}
-              subtitle={scenarioSubtitle(scenario, progress, p.canSetUp)}
-              onPress={() => p.onNav(openScenario(scenario, results), 'forward')}
-            />
-          )
-        })}
+        {approved
+          ? null
+          : (checklist.recheck ?? []).map((item) => {
+              const state =
+                p.rechecked[item.id] ?? (item.stillBrokenHere ? 'still_broken' : undefined)
+              return (
+                <Row
+                  key={item.id}
+                  colors={colors}
+                  lead={
+                    state ? (
+                      <Mark kind={state === 'fixed' ? 'pass' : 'fail'} colors={colors} />
+                    ) : (
+                      <Badge icon="arrow.clockwise" colors={colors} />
+                    )
+                  }
+                  title={`Re-check: ${item.excerpt}`}
+                  subtitle={
+                    state === 'fixed'
+                      ? 'Fixed here'
+                      : state
+                        ? 'Still broken here'
+                        : reportedBy(item)
+                  }
+                  onPress={() => p.onNav({ view: 'recheck', id: item.id }, 'forward')}
+                />
+              )
+            })}
+        {approved
+          ? null
+          : scenarios.map((scenario) => {
+              const progress = scenarioProgress(scenario, results)
+              return (
+                <Row
+                  key={scenario.key}
+                  colors={colors}
+                  lead={<ProgressMark progress={progress} colors={colors} />}
+                  title={scenario.title}
+                  subtitle={scenarioSubtitle(scenario, progress, p.canSetUp)}
+                  onPress={() => p.onNav(openScenario(scenario, results), 'forward')}
+                />
+              )
+            })}
         {ideas.length ? (
           <>
             <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>
@@ -442,7 +477,7 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
             ))}
           </>
         ) : null}
-        {finished || nothingPlanned ? (
+        {approved || (finished && !canApprove) ? (
           <>
             <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>
               Review another PR
@@ -451,7 +486,7 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
               <ActivityIndicator color={colors.secondary} />
             ) : others.length === 0 ? (
               <Text style={[text.subhead, { color: colors.secondary }]}>
-                No other open PRs have a preview right now.
+                No other PRs are waiting for a review.
               </Text>
             ) : (
               others.map((pr) => <PullRow key={pr.number} pr={pr} p={p} colors={colors} />)
@@ -525,7 +560,16 @@ function PullRow({ pr, p, colors }: { pr: OpenPr; p: ReviewPopoverProps; colors:
             ? pr.pageUrl
               ? 'Changes native code: tap to install its build'
               : 'Changes native code: needs a new build of this app'
-            : [pr.fromIdea ? 'From an idea' : null, pr.author, pr.draft ? 'Draft' : null]
+            : [
+                pr.toCheck === undefined
+                  ? null
+                  : pr.toCheck > 0
+                    ? `${pr.toCheck} to check`
+                    : 'Nothing to check: look and approve',
+                pr.fromIdea ? 'From an idea' : null,
+                pr.author,
+                pr.draft ? 'Draft' : null,
+              ]
                 .filter(Boolean)
                 .join(' · ') || 'Open its build'
       }

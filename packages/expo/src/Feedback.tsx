@@ -45,6 +45,7 @@ import {
 import {
   answerIdea,
   approveMessage,
+  approvePr,
   type Caller,
   fetchFeed,
   fetchOpenPrs,
@@ -206,6 +207,9 @@ type Phase = 'idle' | 'loading' | 'open' | 'capturing' | 'composing'
  * to reporting an issue with a screenshot of the screen behind it. It keeps
  * the checklist fresh in the background, so it can say when a newer build is out.
  */
+/** ideaBusy while Approve PR is in flight. */
+const APPROVING = 'approve-pr'
+
 export function ReportButton({
   apiUrl,
   canSetUp,
@@ -243,6 +247,7 @@ export function ReportButton({
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [reports, setReports] = useState<Report[]>([])
   const [ideaBusy, setIdeaBusy] = useState<string | null>(null)
+  const [approveNote, setApproveNote] = useState<string | null>(null)
   const [pulls, setPulls] = useState<OpenPr[] | null>(null)
   const [composerKind, setComposerKind] = useState<'issue' | 'idea'>('issue')
   const launch = useLaunchState()
@@ -639,6 +644,27 @@ export function ReportButton({
     )
   }
 
+  /** Approve PR: the checklist passed, or there was nothing to check. */
+  async function approveThisPr() {
+    if (!caller || !platform) return
+    rememberName()
+    haptics.selection()
+    setIdeaBusy(APPROVING)
+    const result = await approvePr(
+      { caller, platform, ...(rememberedName ? { by: rememberedName } : {}) },
+      { apiUrl },
+    )
+    setIdeaBusy(null)
+    if (!result.ok) {
+      haptics.warning()
+      setError(result.message)
+      return
+    }
+    haptics.success()
+    setApproveNote(approveMessage(result.approve))
+    setPulls((list) => list?.map((pr) => (pr.current ? { ...pr, approved: true } : pr)) ?? list)
+  }
+
   async function showPulls() {
     if (!preview || !platform) return
     setPulls(null)
@@ -732,6 +758,8 @@ export function ReportButton({
           reports={reports}
           onFixReport={(id) => void fixBug(id)}
           ideaBusy={ideaBusy}
+          approveNote={approveNote}
+          onApprovePr={() => void approveThisPr()}
           pulls={pulls}
           onShowPulls={() => void showPulls()}
           onSwitchPr={switchPr}

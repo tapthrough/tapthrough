@@ -66,7 +66,40 @@ export interface OpenPr {
   pageUrl?: string | null
   needsNewBuild: boolean
   fromIdea: boolean
+  /** Someone approved it in the app. Older servers omit it. */
+  approved?: boolean
+  /** Checklist items on its latest build; 0 means look around and approve. Older servers omit it. */
+  toCheck?: number
   updatedAt: string
+}
+
+/** Other open PRs still waiting for a review. */
+export function prsToReview(pulls: OpenPr[] | null): OpenPr[] {
+  return (pulls ?? []).filter((pr) => !pr.current && !pr.approved)
+}
+
+/** Approves the PR whose build is running, after testing it. Never throws. */
+export function approvePr(
+  input: { caller: Caller; platform: Platform; by?: string },
+  options: Options,
+) {
+  return call(
+    options,
+    '/api/v1/pulls/approve',
+    {
+      method: 'POST',
+      body: { ...credential(input.caller, input.platform), ...(input.by ? { by: input.by } : {}) },
+    },
+    (body) =>
+      typeof body.pr === 'number'
+        ? {
+            approve:
+              body.result === 'review' || body.result === 'auto_merge' || body.result === 'merged'
+                ? (body.result as ApproveOutcome)
+                : null,
+          }
+        : undefined,
+  )
 }
 
 export type ApproveOutcome = 'review' | 'auto_merge' | 'merged'

@@ -43,8 +43,11 @@ button to fill the screen. Tap the Review button again (now an ✕) to close it.
 
 Also in the panel:
 
-- **When you're done.** After the last item, **Finish Review** shows a summary (everything passed, or
-  how many steps failed) and a list of other open PRs to review next. Tap one to switch to its build.
+- **Approve.** When every step passed, or the PR has nothing to check, the main button is **Approve PR**.
+  It labels the PR `tapthrough:approved` and comments who approved it; a PR Claude built from an idea
+  can also merge, if the repo allows. If a step failed, there's no Approve: your reports are on the PR.
+- **Next PR.** Once a PR is approved or reviewed, the panel lists other open PRs that nobody has
+  approved yet, with how many items each has to check. Tap one to switch to its build.
 - **Ideas waiting on you.** Ideas that need an answer or are ready to try show up here. Others stay out of
   the way.
 - **Re-check earlier reports.** After a new push, reports from before show up first. Mark them **Fixed** or

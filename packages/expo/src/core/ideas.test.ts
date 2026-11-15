@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   approveMessage,
+  approvePr,
   fetchFeed,
   fetchIdeas,
   fetchOpenPrs,
@@ -10,6 +11,8 @@ import {
   ideasNeedingYou,
   isMoving,
   newlyWaiting,
+  type OpenPr,
+  prsToReview,
   type Report,
   replyToIdea,
   reportsNeedingYou,
@@ -253,5 +256,30 @@ describe('bug reports', () => {
       { apiUrl, fetch: respond(201, { issueNumber: 9, issueUrl: 'u', fix: 'started' }) },
     )
     expect(result).toEqual({ ok: true, issueNumber: 9, issueUrl: 'u', fixing: true })
+  })
+})
+
+describe('approving a PR', () => {
+  it('posts the build credential and who approved, and says what happened', async () => {
+    const fetch = respond(200, { pr: 7, result: 'review' })
+    const result = await approvePr({ caller, platform: 'ios', by: 'Jo' }, { apiUrl, fetch })
+    expect(result).toEqual({ ok: true, approve: 'review' })
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(String(url)).toContain('/api/v1/pulls/approve')
+    expect(JSON.parse(String(init.body))).toMatchObject({ updateGroupId: 'g1', by: 'Jo' })
+    expect(
+      (await approvePr({ caller, platform: 'ios' }, { apiUrl, fetch: respond(409, {}) })).ok,
+    ).toBe(false)
+  })
+
+  it('lists only other PRs nobody has approved yet', () => {
+    const pr = (number: number, extra: Partial<OpenPr> = {}) =>
+      ({ number, current: false, ...extra }) as OpenPr
+    expect(
+      prsToReview([pr(1, { current: true }), pr(2, { approved: true }), pr(3)]).map(
+        (p) => p.number,
+      ),
+    ).toEqual([3])
+    expect(prsToReview(null)).toEqual([])
   })
 })
