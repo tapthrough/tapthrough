@@ -68,6 +68,7 @@ export function easError(error: unknown): string {
     (error instanceof Error ? error.message : String(error))
   const lines = raw
     .split('\n')
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: strips ANSI color codes from EAS output
     .map((l) => l.replace(/\u001b\[[0-9;]*m/g, '').trim())
     .filter((l) => l && !/^(›|»|at\s)/.test(l) && !EAS_INFO.test(l))
   // The first line that names a problem; EAS often prints notes before it.
