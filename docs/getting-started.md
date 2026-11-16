@@ -18,6 +18,8 @@ it step by step` into Claude Code, Cursor or Codex. See [set up with your coding
 - An Expo account. Builds and updates run on **your** EAS plan, and Tapthrough never holds your Expo
   credentials.
 - **For seeded test data (optional):** a staging backend where creating test users is allowed
+- **For push notifications (optional):** `expo-notifications`, and an Apple push key in your EAS
+  credentials
 
 ## 1. Install the GitHub App
 
@@ -92,13 +94,17 @@ Then:
    "runtimeVersion": { "policy": "fingerprint" }
    ```
 
-   The fingerprint hashes your app config, including `seedHookUrl` and `apiUrl`, so changing either one
-   would need a new build. They never touch native code, so you can leave them out with a
+   The fingerprint hashes your app config, including `seedHookUrl` and `apiUrl`, and the version of every
+   package with a config plugin, `@tapthrough/expo` included. So changing a URL or upgrading Tapthrough
+   would need a new build, and PRs made before the upgrade wouldn't open on builds made after it.
+   Tapthrough has no native code and its plugin only writes `extra`, so leave it out with a
    `fingerprint.config.js` next to `app.json`:
 
    ```js
    /** @type {import('@expo/fingerprint').Config} */
    module.exports = {
+     // Tapthrough's version: upgrading it never changes native code.
+     ignorePaths: ['node_modules/@tapthrough/expo/package.json'],
      sourceSkips: [
        // Expo's default ("balanced") skips…
        'PackageJsonAndroidAndIosScriptsIfNotContainRun',
@@ -242,6 +248,46 @@ test data and a checklist:
    the repos you list.
    It can be a Supabase edge function, or an Expo Router API route on EAS Hosting next to your app.
    Reviewers can then tap **Set Up and Start** in the Review panel and the app sets itself up.
+
+## 6. Tell reviewers when a PR is ready (optional)
+
+Reviewers can get a push notification when a new PR's preview is up: "PR #42 is ready to review", with
+its title and how many items there are to check. Tapping it opens that PR's build, or its page when the
+reviewer's installed build can't run it. Each PR notifies once per platform, however many times it's
+pushed.
+
+It's off until you add it, and then each reviewer chooses. Nothing is asked when the app launches.
+After a reviewer finishes a PR, the Review panel offers **Notify Me About New PRs**, and iOS asks for
+permission then.
+
+1. **Install `expo-notifications`** if your app doesn't have it:
+
+   ```sh
+   npx expo install expo-notifications
+   ```
+
+   It's a native module, so if you've just added it, make a new development build (see
+   [step 3](#3-make-a-development-build)). Apps that already use it don't need one.
+2. **Pass the adapter** to `<Tapthrough>`:
+
+   ```tsx
+   import { tapthroughNotifications } from '@tapthrough/expo/notifications'
+
+   <Tapthrough auth={auth} reset={reset} notifications={tapthroughNotifications}>
+   ```
+
+   The adapter comes from its own entry point, so apps that leave it out never load `expo-notifications`.
+3. **Give EAS an Apple push key** (iOS only). Run `eas credentials -p ios`, pick your development profile,
+   and under **Push Notifications** set up a key if there isn't one. Builds the Action starts run
+   without prompts, so they can't create one for you. Android needs nothing extra.
+
+Notifications go through Expo's push service using each device's Expo push token. Tapthrough stores the
+token, the reviewer's name and the build's runtime version, and nothing else. A reviewer turns them off
+in the phone's Settings; tokens Expo reports as gone stop being used.
+
+If your app also shows its own notifications, set a foreground handler with
+`Notifications.setNotificationHandler` as you normally would. Tapthrough only acts on taps of its own
+"PR ready" notifications and leaves the rest to your app.
 
 ## What reviewers do
 

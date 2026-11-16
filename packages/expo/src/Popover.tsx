@@ -21,15 +21,22 @@ import type {
   SetupLine,
 } from './core/feedback.js'
 import { resetMessage } from './core/feedback.js'
-import { type Idea, type IdeaStage, type OpenPr, stepTime } from './core/ideas.js'
+import {
+  type Idea,
+  type IdeaStage,
+  type OpenPr,
+  prsToReview,
+  type Report,
+  stepTime,
+} from './core/ideas.js'
 import {
   nextOpenScenario,
-  otherStates,
   type Placement,
   type Results,
   type ScenarioProgress,
   type SetupProgress,
   scenarioProgress,
+  screenPosition,
   setupLineStates,
   stepId,
 } from './core/review.js'
@@ -46,9 +53,10 @@ export type Nav =
   /** `index` is the step's position in the scenario's `steps`. */
   | { view: 'step'; key: string; index: number }
   | { view: 'done'; key: string }
-  | { view: 'explore'; key: string }
   | { view: 'recheck'; id: string }
   | { view: 'idea'; id: string }
+  /** A bug sent from this staging or TestFlight app, and Claude's fix. */
+  | { view: 'report'; id: string }
   /** The repo's other open PRs, to switch builds. */
   | { view: 'prs' }
 
@@ -93,8 +101,17 @@ export interface ReviewPopoverProps {
   onAnswerIdea: (id: string, answers: string[]) => void
   onReplyIdea: (id: string, reply: string) => void
   onIdeaAction: (id: string, action: 'build' | 'retry' | 'approve') => void
-  /** The idea whose request is in flight, to show a spinner on its button. */
+  /** Bugs sent from staging and TestFlight builds, newest first, with Claude's fixes. */
+  reports: Report[]
+  onFixReport: (id: string) => void
+  /** The idea or report whose request is in flight, to show a spinner on its button. */
   ideaBusy: string | null
+  /** What Approve PR did, once it has. */
+  approveNote: string | null
+  /** "PR ready" notifications on this device; null when the app doesn't offer them. */
+  push: 'on' | 'off' | null
+  onEnablePush: () => void
+  onApprovePr: () => void
   /** Open PRs with previews; null until loaded. */
   pulls: OpenPr[] | null
   onShowPulls: () => void
@@ -140,7 +157,7 @@ function entryFor(checklist: Checklist, key: string): Entry | undefined {
 const navKey = (nav: Nav) =>
   nav.view === 'list' || nav.view === 'prs'
     ? nav.view
-    : nav.view === 'recheck' || nav.view === 'idea'
+    : nav.view === 'recheck' || nav.view === 'idea' || nav.view === 'report'
       ? `${nav.view}:${nav.id}`
       : nav.view === 'step'
         ? `step:${nav.key}:${nav.index}`
@@ -287,6 +304,10 @@ function renderView(p: ReviewPopoverProps, colors: Colors): Screen {
     const idea = p.ideas.find((i) => i.id === nav.id)
     return idea ? ideaView(p, idea, colors) : listView(p, colors)
   }
+  if (nav.view === 'report') {
+    const report = p.reports.find((r) => r.id === nav.id)
+    return report ? reportView(p, report, colors) : listView(p, colors)
+  }
   if (nav.view === 'recheck') {
     const item = checklist.recheck?.find((r) => r.id === nav.id)
     return item ? recheckView(p, item, colors) : listView(p, colors)
@@ -304,18 +325,306 @@ function renderView(p: ReviewPopoverProps, colors: Colors): Screen {
         : listView(p, colors)
     case 'done':
       return doneView(p, entry, colors)
-    case 'explore':
-      return exploreView(p, entry, colors)
   }
 }
 
 /* ---------------------------------- views --------------------------------- */
 
 function listView(p: ReviewPopoverProps, colors: Colors): Screen {
+  return p.staff ? staffListView(p, colors) : prListView(p, colors)
+}
+
+/** What's left on this PR and its one next action. */
+function prProgress(p: ReviewPopoverProps) {
+  const { checklist, results } = p
+  const scenarios = checklist.scenarios.filter((s) => s.steps.length > 0)
+  const recheck = (checklist.recheck ?? []).filter(
+    (item) => !(p.rechecked[item.id] ?? (item.stillBrokenHere ? 'still_broken' : undefined)),
+  )
+  const progress = scenarios.map((s) => scenarioProgress(s, results))
+  const done = progress.filter((pr) => pr.state !== 'new' && pr.state !== 'partial').length
+  const failed = progress.reduce((n, pr) => n + pr.failed, 0)
+  const next = nextOpenScenario(checklist, results)
+  return { scenarios, recheck, done, failed, next, total: scenarios.length }
+}
+
+/**
+ * The PR's review: what to check, one obvious next action, and once it's all
+ * checked, other PRs to review. Only things the reviewer can act on are listed.
+ */
+function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
+  const { checklist, results } = p
+  const { scenarios, recheck, done, failed, next, total } = prProgress(p)
+  const finished = !next && recheck.length === 0
+  const nothingPlanned = total === 0 && (checklist.recheck ?? []).length === 0
+  const ideas = p.ideas.filter(
+    (idea) =>
+      idea.status === 'needs_answers' || idea.status === 'ready_to_test' || Boolean(idea.warning),
+  )
+  const others = prsToReview(p.pulls)
+  const approved = Boolean(p.pulls?.find((pr) => pr.current)?.approved)
+  const canApprove = !approved && (nothingPlanned || (finished && failed === 0))
+
+  let lead: string
+  if (approved) {
+    lead = p.approveNote ?? `PR #${checklist.pr} is approved.`
+  } else if (nothingPlanned) {
+    lead = 'Nothing to check on this PR. Look around the app, report anything off, then approve it.'
+  } else if (finished) {
+    const unit = checklist.walkthrough ? 'screen' : 'step'
+    lead = failed
+      ? `${failed} ${unit}${failed === 1 ? '' : 's'} failed, and your reports are on PR #${checklist.pr}. Fixed now? Check again and tap Pass.`
+      : `Everything passed. Approve PR #${checklist.pr} to tell the team it’s good to merge.`
+  } else if (done === 0 && recheck.length === 0 && checklist.walkthrough) {
+    // Only shared code changed: say what changed, then go screen by screen.
+    lead = checklist.walkthrough.intro
+  } else if (done === 0 && recheck.length === 0) {
+    lead = `Check ${total === 1 ? 'this' : `these ${total}`} on PR #${checklist.pr}. Each one sets the app up and walks you through it.`
+  } else {
+    const left = total - done + recheck.length
+    lead = `${left} left to check on PR #${checklist.pr}.`
+  }
+
+  let footer: ReactNode
+  if (canApprove) {
+    footer = (
+      <Capsule
+        title={`Approve PR #${checklist.pr}`}
+        busy={p.ideaBusy === 'approve-pr'}
+        onPress={p.onApprovePr}
+      />
+    )
+  } else if (approved) {
+    footer = <Capsule title="Done" kind={others.length ? 'plain' : undefined} onPress={p.onClose} />
+  } else if (recheck[0]) {
+    const item = recheck[0]
+    footer = (
+      <Capsule
+        title="Re-check Earlier Report"
+        onPress={() => p.onNav({ view: 'recheck', id: item.id }, 'forward')}
+      />
+    )
+  } else if (next) {
+    const started = scenarioProgress(next, results).checked > 0
+    footer = (
+      <Capsule
+        title={`${started ? 'Continue' : done === 0 ? 'Start' : 'Next'}: ${next.title}`}
+        onPress={() => p.onNav(openScenario(next, results), 'forward')}
+      />
+    )
+  } else if (failed > 0) {
+    const scenario = scenarios.find((s) => firstFailed(s, results) >= 0)
+    footer = scenario ? (
+      <Capsule
+        title="Check Failed Step Again"
+        onPress={() =>
+          p.onNav(
+            { view: 'step', key: scenario.key, index: firstFailed(scenario, results) },
+            'forward',
+          )
+        }
+      />
+    ) : (
+      <Capsule title="Done" onPress={p.onClose} />
+    )
+  } else {
+    footer = <Capsule title="Done" kind={others.length ? 'plain' : undefined} onPress={p.onClose} />
+  }
+
+  return {
+    title: `PR #${checklist.pr}`,
+    subtitle: approved
+      ? 'Approved'
+      : nothingPlanned
+        ? 'Nothing to check'
+        : finished
+          ? failed
+            ? `${failed} failed`
+            : 'All passed'
+          : `${done} of ${total} checked`,
+    body: (
+      <>
+        {checklist.newerBuild ? <NewerRow build={checklist.newerBuild} colors={colors} /> : null}
+        {checklist.reset ? <ResetRow reset={checklist.reset} colors={colors} /> : null}
+        <Text style={[text.subhead, { color: colors.label }]}>{lead}</Text>
+        {approved
+          ? null
+          : (checklist.recheck ?? []).map((item) => {
+              const state =
+                p.rechecked[item.id] ?? (item.stillBrokenHere ? 'still_broken' : undefined)
+              return (
+                <Row
+                  key={item.id}
+                  colors={colors}
+                  lead={
+                    state ? (
+                      <Mark kind={state === 'fixed' ? 'pass' : 'fail'} colors={colors} />
+                    ) : (
+                      <Badge icon="arrow.clockwise" colors={colors} />
+                    )
+                  }
+                  title={`Re-check: ${item.excerpt}`}
+                  subtitle={
+                    state === 'fixed'
+                      ? 'Fixed here'
+                      : state
+                        ? 'Still broken here'
+                        : reportedBy(item)
+                  }
+                  onPress={() => p.onNav({ view: 'recheck', id: item.id }, 'forward')}
+                />
+              )
+            })}
+        {approved
+          ? null
+          : scenarios.map((scenario) => {
+              const progress = scenarioProgress(scenario, results)
+              return (
+                <Row
+                  key={scenario.key}
+                  colors={colors}
+                  lead={<ProgressMark progress={progress} colors={colors} />}
+                  title={scenario.title}
+                  subtitle={scenarioSubtitle(
+                    scenario,
+                    progress,
+                    p.canSetUp,
+                    Boolean(checklist.walkthrough),
+                  )}
+                  onPress={() => p.onNav(openScenario(scenario, results), 'forward')}
+                />
+              )
+            })}
+        {ideas.length ? (
+          <>
+            <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>
+              Ideas waiting on you
+            </Text>
+            {ideas.slice(0, 5).map((idea) => (
+              <IdeaRow key={idea.id} idea={idea} p={p} colors={colors} />
+            ))}
+          </>
+        ) : null}
+        {approved || (finished && !canApprove) ? (
+          <>
+            <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>
+              Review another PR
+            </Text>
+            {p.pulls === null ? (
+              <ActivityIndicator color={colors.secondary} />
+            ) : others.length === 0 ? (
+              <Text style={[text.subhead, { color: colors.secondary }]}>
+                No other PRs are waiting for a review.
+              </Text>
+            ) : (
+              others.map((pr) => <PullRow key={pr.number} pr={pr} p={p} colors={colors} />)
+            )}
+            {p.push === 'off' ? (
+              <Row
+                colors={colors}
+                lead={<Badge icon="bell" colors={colors} />}
+                title="Notify Me About New PRs"
+                subtitle="Get a notification when a PR is ready to review"
+                onPress={p.onEnablePush}
+              />
+            ) : null}
+          </>
+        ) : null}
+        <ReviewerName name={p.name} onChange={p.onNameChange} colors={colors} />
+      </>
+    ),
+    footer: (
+      <>
+        {footer}
+        <View style={styles.pair}>
+          <Capsule
+            title="Report Issue"
+            kind="plain"
+            onPress={p.onReportOther}
+            style={styles.half}
+          />
+          <Capsule title="Share Idea" kind="plain" onPress={p.onShareIdea} style={styles.half} />
+        </View>
+      </>
+    ),
+  }
+}
+
+function IdeaRow({ idea, p, colors }: { idea: Idea; p: ReviewPopoverProps; colors: Colors }) {
+  return (
+    <Row
+      colors={colors}
+      lead={
+        <Badge
+          icon="lightbulb"
+          colors={colors}
+          attention={
+            idea.status === 'needs_answers' ||
+            idea.status === 'ready_to_test' ||
+            Boolean(idea.warning)
+          }
+        />
+      }
+      title={ideaTitle(idea)}
+      subtitle={
+        idea.warning
+          ? `${idea.statusLine} · taking longer than usual`
+          : idea.status === 'failed' || idea.status === 'not_set_up'
+            ? `${idea.statusLine} · tap to see why`
+            : idea.statusLine
+      }
+      onPress={() => p.onNav({ view: 'idea', id: idea.id }, 'forward')}
+    />
+  )
+}
+
+function PullRow({ pr, p, colors }: { pr: OpenPr; p: ReviewPopoverProps; colors: Colors }) {
+  return (
+    <Row
+      colors={colors}
+      lead={
+        pr.current ? (
+          <Mark kind="pass" colors={colors} />
+        ) : (
+          <Badge icon={pr.fromIdea ? 'lightbulb' : 'arrow.triangle.branch'} colors={colors} />
+        )
+      }
+      title={`#${pr.number} ${pr.title}`}
+      subtitle={
+        pr.current
+          ? 'Open now'
+          : pr.needsNewBuild
+            ? pr.pageUrl
+              ? 'Changes native code: tap to install its build'
+              : 'Changes native code: needs a new build of this app'
+            : [
+                pr.toCheck === undefined
+                  ? null
+                  : pr.toCheck > 0
+                    ? `${pr.toCheck} to check`
+                    : 'Nothing to check: look and approve',
+                pr.fromIdea ? 'From an idea' : null,
+                pr.author,
+                pr.draft ? 'Draft' : null,
+              ]
+                .filter(Boolean)
+                .join(' · ') || 'Open its build'
+      }
+      onPress={() => {
+        if (pr.current) p.onNav({ view: 'list' }, 'back')
+        else if (pr.openUrl) p.onSwitchPr(pr)
+        // This app can't load it: its page has the PR's own build to install first.
+        else if (pr.pageUrl) Linking.openURL(pr.pageUrl)
+      }}
+    />
+  )
+}
+
+/** The installed staging or TestFlight build: the team's bugs and ideas, and ways to send more. */
+function staffListView(p: ReviewPopoverProps, colors: Colors): Screen {
   const { checklist, results } = p
   const scenarios = checklist.scenarios.filter((s) => s.steps.length > 0)
   const recheck = checklist.recheck ?? []
-  const others = otherStates(checklist)
   const counts = [
     scenarios.length ? `${scenarios.length} to test` : null,
     recheck.length ? `${recheck.length} to re-check` : null,
@@ -366,26 +675,6 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
             />
           )
         })}
-        {others.length ? (
-          <>
-            <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>
-              Other states
-            </Text>
-            {others.map((state) => (
-              <Row
-                key={state.key}
-                colors={colors}
-                lead={<Badge icon="arrow.right.circle" colors={colors} />}
-                title={state.title}
-                subtitle={
-                  plain(state.why) ??
-                  (p.canSetUp && state.setup?.length ? 'Sets itself up' : 'Look around')
-                }
-                onPress={() => p.onNav({ view: 'brief', key: state.key }, 'forward')}
-              />
-            ))}
-          </>
-        ) : null}
         {p.ideas.length ? (
           <>
             <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>Ideas</Text>
@@ -417,8 +706,29 @@ function listView(p: ReviewPopoverProps, colors: Colors): Screen {
             ))}
           </>
         ) : null}
+        {p.reports.length ? (
+          <>
+            <Text style={[text.footnote, styles.section, { color: colors.secondary }]}>Bugs</Text>
+            {p.reports.slice(0, 5).map((report) => (
+              <Row
+                key={report.id}
+                colors={colors}
+                lead={
+                  <Badge
+                    icon="ladybug"
+                    colors={colors}
+                    attention={report.fix?.status === 'ready'}
+                  />
+                }
+                title={report.title}
+                subtitle={report.statusLine}
+                onPress={() => p.onNav({ view: 'report', id: report.id }, 'forward')}
+              />
+            ))}
+          </>
+        ) : null}
         {p.staff ? (
-          p.ideas.length ? null : (
+          p.ideas.length || p.reports.length ? null : (
             <Text style={[text.subhead, { color: colors.secondary }]}>
               Something wrong? Report it, and it becomes a GitHub issue with a screenshot. Got an
               idea? Claude writes it up, and can build it.
@@ -578,6 +888,93 @@ function ideaView(p: ReviewPopoverProps, idea: Idea, colors: Colors): Screen {
           links={[
             ...links,
             idea.runUrl && !idea.warning ? { title: 'Workflow Run', url: idea.runUrl } : null,
+          ]}
+          colors={colors}
+        />
+      </>
+    ),
+    footer,
+  }
+}
+
+function reportView(p: ReviewPopoverProps, report: Report, colors: Colors): Screen {
+  const busy = p.ideaBusy === report.id
+  const fix = report.fix
+  const here = fix?.prNumber != null && fix.prNumber === p.checklist.pr
+  let footer: ReactNode = null
+  if (fix?.status === 'ready' && !here) {
+    footer = p.staff ? (
+      fix.pageUrl ? (
+        <Capsule
+          title={`Open PR #${fix.prNumber} Page`}
+          kind="plain"
+          onPress={() => Linking.openURL(fix.pageUrl as string)}
+        />
+      ) : null
+    ) : (
+      <Capsule
+        title="Open Fix to Test"
+        onPress={() => {
+          const pr = p.pulls?.find((pull) => pull.number === fix.prNumber)
+          if (pr?.openUrl) p.onSwitchPr(pr)
+          else if (pr?.pageUrl ?? fix.pageUrl)
+            Linking.openURL((pr?.pageUrl ?? fix.pageUrl) as string)
+          else if (fix.prUrl) Linking.openURL(fix.prUrl)
+        }}
+      />
+    )
+  } else if (report.canFix) {
+    footer = (
+      <Capsule
+        title={fix ? 'Try Again' : 'Fix with Claude'}
+        {...(fix ? { kind: 'plain' as const } : {})}
+        busy={busy}
+        onPress={() => p.onFixReport(report.id)}
+      />
+    )
+  }
+  let explain: string | null = null
+  if (!fix) {
+    explain =
+      'It’s a GitHub issue. Fix with Claude has Claude fix it from your screenshot and the app’s logs, and open a PR you can test.'
+  } else if (fix.status === 'ready') {
+    explain = here
+      ? 'You’re on the fix’s build. Check it’s fixed, then merge the PR on GitHub.'
+      : p.staff
+        ? `You’re on ${p.staff}, not a PR build, so PR #${fix.prNumber} can’t open here. Open it on a phone with the development build, or in a simulator from the PR’s page.`
+        : 'Open the fix’s build and check it’s fixed.'
+  } else if (fix.status === 'not_set_up') {
+    explain =
+      'Claude fixes bugs in the repo’s Fix with Claude workflow, and this repo doesn’t have it yet. The issue says how to add it.'
+  } else if (fix.status === 'failed') {
+    explain = 'The fix run stopped before it finished. Try again, or see the run.'
+  }
+  return {
+    title: report.title,
+    subtitle: report.statusLine,
+    back: true,
+    body: (
+      <>
+        {fix?.status === 'fixing' ? (
+          <View style={styles.pair}>
+            <ActivityIndicator color={colors.secondary} />
+            <Text style={[text.footnote, styles.rowText, { color: colors.secondary }]}>
+              Claude is reading the code and fixing it. It opens a PR with its own build to test,
+              usually within a few minutes.
+            </Text>
+          </View>
+        ) : null}
+        {fix?.summary ? (
+          <Text style={[text.subhead, { color: colors.label }]}>{fix.summary}</Text>
+        ) : null}
+        {explain ? (
+          <Text style={[text.footnote, { color: colors.secondary }]}>{explain}</Text>
+        ) : null}
+        <LinkRow
+          links={[
+            fix?.prUrl ? { title: `PR #${fix.prNumber}`, url: fix.prUrl } : null,
+            { title: `Issue #${report.issueNumber}`, url: report.issueUrl },
+            fix?.runUrl ? { title: 'Workflow Run', url: fix.runUrl } : null,
           ]}
           colors={colors}
         />
@@ -799,39 +1196,14 @@ function prsView(p: ReviewPopoverProps, colors: Colors): Screen {
         No other pull requests have a preview yet.
       </Text>
     ) : (
-      pulls.map((pr) => (
-        <Row
-          key={pr.number}
-          colors={colors}
-          lead={
-            pr.current ? (
-              <Mark kind="pass" colors={colors} />
-            ) : (
-              <Badge icon={pr.fromIdea ? 'lightbulb' : 'arrow.triangle.branch'} colors={colors} />
-            )
-          }
-          title={`#${pr.number} ${pr.title}`}
-          subtitle={
-            pr.current
-              ? 'Open now'
-              : pr.needsNewBuild
-                ? pr.pageUrl
-                  ? 'Changes native code: tap to install its build'
-                  : 'Changes native code: needs a new build of this app'
-                : [pr.fromIdea ? 'From an idea' : null, pr.author, pr.draft ? 'Draft' : null]
-                    .filter(Boolean)
-                    .join(' · ') || 'Open its build'
-          }
-          onPress={() => {
-            if (pr.current) p.onNav({ view: 'list' }, 'back')
-            else if (pr.openUrl) p.onSwitchPr(pr)
-            // This app can't load it: its page has the PR's own build to install first.
-            else if (pr.pageUrl) Linking.openURL(pr.pageUrl)
-          }}
-        />
-      ))
+      pulls.map((pr) => <PullRow key={pr.number} pr={pr} p={p} colors={colors} />)
     ),
   }
+}
+
+/** The first failed step's position in a scenario, or -1. */
+function firstFailed(scenario: ChecklistScenario, results: Results): number {
+  return scenario.steps.findIndex((step) => results[stepId(scenario.key, step.index)] === 'fail')
 }
 
 /** A scenario not started opens its brief; one in progress opens its next step. */
@@ -848,7 +1220,15 @@ function scenarioSubtitle(
   scenario: ChecklistScenario,
   progress: ScenarioProgress,
   canSetUp: boolean,
+  walkthrough = false,
 ) {
+  if (walkthrough) {
+    // One look-over per screen, so no step counts.
+    if (progress.state === 'failed') return 'Failed'
+    if (progress.state === 'passed') return 'Passed'
+    if (!scenario.setup?.length) return 'Not checked yet'
+    return canSetUp ? 'Sets itself up' : 'Set up by hand'
+  }
   const steps = `${progress.total} step${progress.total === 1 ? '' : 's'}`
   if (progress.state === 'new') {
     if (!scenario.setup?.length) return steps
@@ -868,7 +1248,9 @@ function briefView(p: ReviewPopoverProps, entry: Entry, colors: Colors): Screen 
     title: entry.title,
     subtitle: entry.other
       ? 'Another state of the app'
-      : `${steps.length} step${steps.length === 1 ? '' : 's'}`,
+      : p.checklist.walkthrough
+        ? screenPosition(p.checklist, entry.key)
+        : `${steps.length} step${steps.length === 1 ? '' : 's'}`,
     back: true,
     body: (
       <>
@@ -911,10 +1293,7 @@ function briefView(p: ReviewPopoverProps, entry: Entry, colors: Colors): Screen 
         <Capsule title="Skip Setup" kind="plain" onPress={() => p.onStart(entry.key)} />
       </>
     ) : (
-      <Capsule
-        title={manual ? 'I’m Ready' : entry.other ? 'Look Around' : 'Start'}
-        onPress={() => p.onStart(entry.key)}
-      />
+      <Capsule title={entry.other ? 'Open Screen' : 'Start'} onPress={() => p.onStart(entry.key)} />
     ),
   }
 }
@@ -971,12 +1350,19 @@ function stepView(
   const result = p.results[stepId(scenario.key, step.index)]
   return {
     title: entry.title,
-    subtitle: `Step ${index + 1} of ${scenario.steps.length}`,
+    subtitle: p.checklist.walkthrough
+      ? screenPosition(p.checklist, scenario.key)
+      : `Step ${index + 1} of ${scenario.steps.length}`,
     back: true,
     body: (
       <>
         <Text style={[text.headline, { color: colors.label }]}>{step.action}</Text>
         <Text style={[text.subhead, { color: colors.secondary }]}>Expect: {step.expect}</Text>
+        {result === 'fail' && !step.result?.carriedFrom ? (
+          <Text style={[text.footnote, { color: colors.secondary }]}>
+            You failed this step. If it works now, tap Pass: the PR shows the newest result.
+          </Text>
+        ) : null}
         {step.result?.carriedFrom && result === step.result.result ? (
           <Text style={[text.footnote, { color: colors.secondary }]}>
             {`${step.result.result === 'pass' ? 'Passed' : step.result.result === 'fail' ? 'Failed' : 'Skipped'} on ${step.result.carriedFrom.slice(0, 7)}. Kept because later pushes didn’t change this screen.`}
@@ -1051,69 +1437,80 @@ function recheckView(p: ReviewPopoverProps, item: RecheckItem, colors: Colors): 
 }
 
 function doneView(p: ReviewPopoverProps, entry: Entry, colors: Colors): Screen {
-  const progress = entry.scenario ? scenarioProgress(entry.scenario, p.results) : null
+  const scenario = entry.scenario
+  const progress = scenario ? scenarioProgress(scenario, p.results) : null
   const next = nextOpenScenario(p.checklist, p.results, entry.key)
+  const failedAt = scenario ? firstFailed(scenario, p.results) : -1
+  const onward = next ? (
+    <Capsule
+      title={`Next: ${next.title}`}
+      kind={failedAt >= 0 ? 'plain' : undefined}
+      onPress={() => p.onNav(openScenario(next, p.results), 'forward')}
+    />
+  ) : (
+    <Capsule
+      title="Finish Review"
+      kind={failedAt >= 0 ? 'plain' : undefined}
+      onPress={() => p.onNav({ view: 'list' }, 'back')}
+    />
+  )
   return {
     title: entry.title,
     subtitle: 'Checked',
     back: true,
     body: (
-      <View style={styles.done}>
-        <Mark kind={progress?.failed ? 'fail' : 'pass'} colors={colors} size={52} />
-        <Text style={[text.title2, { color: colors.label }]}>
-          {progress?.failed ? `${progress.failed} failed` : 'All passed'}
-        </Text>
-        {progress ? (
-          <Text style={[text.subhead, { color: colors.secondary }]}>
-            {`${progress.passed} of ${progress.total} passed`}
+      <>
+        <View style={styles.done}>
+          <Mark kind={progress?.failed ? 'fail' : 'pass'} colors={colors} size={52} />
+          <Text style={[text.title2, { color: colors.label }]}>
+            {progress?.failed ? `${progress.failed} failed` : 'All passed'}
           </Text>
-        ) : null}
-      </View>
+          {progress ? (
+            <Text style={[text.subhead, { color: colors.secondary }]}>
+              {`${progress.passed} of ${progress.total} passed`}
+            </Text>
+          ) : null}
+        </View>
+        {scenario?.steps.map((step, index) => {
+          const result = p.results[stepId(scenario.key, step.index)]
+          return (
+            <Row
+              key={step.index}
+              colors={colors}
+              lead={
+                result === 'pass' || result === 'fail' ? (
+                  <Mark kind={result} colors={colors} />
+                ) : (
+                  <Badge icon="arrow.right" colors={colors} />
+                )
+              }
+              title={step.action}
+              subtitle={
+                result === 'fail'
+                  ? 'Failed · tap to check it again'
+                  : result === 'pass'
+                    ? 'Passed'
+                    : 'Not checked'
+              }
+              onPress={() => p.onNav({ view: 'step', key: scenario.key, index }, 'forward')}
+            />
+          )
+        })}
+      </>
     ),
     footer: (
       <>
-        {next ? (
+        {scenario && failedAt >= 0 ? (
           <Capsule
-            title={`Next: ${next.title}`}
-            onPress={() => p.onNav(openScenario(next, p.results), 'forward')}
+            title="Check Failed Step Again"
+            onPress={() => p.onNav({ view: 'step', key: scenario.key, index: failedAt }, 'forward')}
           />
-        ) : (
-          <Capsule title="All Done" onPress={p.onClose} />
-        )}
-        <Capsule
-          title="Back to List"
-          kind="plain"
-          onPress={() => p.onNav({ view: 'list' }, 'back')}
-        />
+        ) : null}
+        {onward}
       </>
     ),
   }
 }
-
-function exploreView(p: ReviewPopoverProps, entry: Entry, colors: Colors): Screen {
-  return {
-    title: entry.title,
-    subtitle: 'Ready to look around',
-    back: true,
-    body: (
-      <Text style={[text.subhead, { color: colors.label }]}>
-        The app is in this state now. Look around, and report anything that seems off.
-      </Text>
-    ),
-    footer: (
-      <>
-        <Capsule title="Report Something" onPress={p.onReportOther} />
-        <Capsule
-          title="Back to List"
-          kind="plain"
-          onPress={() => p.onNav({ view: 'list' }, 'back')}
-        />
-      </>
-    ),
-  }
-}
-
-/* --------------------------------- pieces --------------------------------- */
 
 function reportedBy(item: RecheckItem) {
   return [item.reporter, `reported on ${item.sha.slice(0, 7)}`].filter(Boolean).join(' · ')

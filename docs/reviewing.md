@@ -26,12 +26,13 @@ ideas are waiting on you.
 The button opens a panel over the app with what this PR needs checked. Tap the expand
 button to fill the screen. Tap the Review button again (now an ✕) to close it.
 
-1. **Pick something to check.** Each item says why it's on the list, like "This PR changed this screen."
-   The top shows how far you are, like **1 of 3 checked**.
+1. **Tap the big button.** The panel lists what this PR needs checked and always has one main button for
+   what's next: **Start**, **Continue** or **Next**, with the item's name. The top shows how far you are,
+   like **1 of 3 checked**. You can also tap any item to do it out of order.
 2. **Set up.** The item shows what setup does (signs you in as a test user, adds test data, opens the
    screen) and its steps. Tap **Set Up and Start** and the app gets itself ready without leaving. Already
    where you need to be? Tap **Skip Setup**. If setup can't run, the panel lists the same steps to do by
-   hand, then **I'm Ready**.
+   hand, then **Start** opens the screen.
 3. **Pass or Fail each step.** One step at a time. Pass is recorded right away. Fail takes a screenshot of
    the app and lets you say what happened.
 4. **Send.** The report shows the step you were on and what was expected. Tap the screenshot to leave it
@@ -42,8 +43,17 @@ button to fill the screen. Tap the Review button again (now an ✕) to close it.
 
 Also in the panel:
 
-- **Other states.** Every scenario in the app, not just the ones this PR touched, so you can jump to an
-  empty account or a viewer role and look around.
+- **Change a result.** Failed a step that works after all, or after a fix? Open the item (or tap **Check
+  Failed Step Again**), go to the step and tap **Pass**. The PR shows the newest result.
+- **Approve.** When every step passed, or the PR has nothing to check, the main button is **Approve PR**.
+  It labels the PR `tapthrough:approved` and comments who approved it; a PR Claude built from an idea
+  can also merge, if the repo allows. If a step failed, there's no Approve: your reports are on the PR.
+- **Next PR.** Once a PR is approved or reviewed, the panel lists other open PRs that nobody has
+  approved yet, with how many items each has to check. Tap one to switch to its build.
+- **Notify Me About New PRs.** Shown after a review when the app supports it. Turn it on and your phone
+  gets "PR #N is ready to review" when each new PR's preview is up; tap it to open that PR.
+- **Ideas waiting on you.** Ideas that need an answer or are ready to try show up here. Others stay out of
+  the way.
 - **Re-check earlier reports.** After a new push, reports from before show up first. Mark them **Fixed** or
   **Still broken**.
 - **Report Issue.** For anything outside the plan: write what's wrong, and the screenshot comes

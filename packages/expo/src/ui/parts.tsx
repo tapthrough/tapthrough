@@ -30,6 +30,8 @@ const GLYPHS = {
   'arrow.right': '→',
   'arrow.up': '↑',
   lightbulb: '✦',
+  ladybug: '✱',
+  bell: '◔',
   'arrow.triangle.branch': '⑂',
 } as const
 export type IconName = keyof typeof GLYPHS

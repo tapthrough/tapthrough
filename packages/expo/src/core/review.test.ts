@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { Checklist, ChecklistScenario, SetupLine } from './feedback.js'
 import {
+  afterScenario,
   nextOpenScenario,
   nextOpenStep,
+  openableRoute,
   otherStates,
   popoverPlacement,
   resultsFrom,
   scenarioProgress,
+  screenPosition,
   setupLineStates,
 } from './review.js'
 
@@ -83,6 +86,41 @@ describe('next step and scenario', () => {
   })
 })
 
+describe('walkthrough', () => {
+  const screen = (key: string, result: 'pass' | 'fail' | null = null): ChecklistScenario => ({
+    key,
+    title: key,
+    routePath: `/${key}`,
+    steps: [step(0, result)],
+  })
+  const tour: Checklist = {
+    pr: 21,
+    sha: 'abc',
+    open: true,
+    walkthrough: { intro: 'Blue background. Let’s check these 3 screens.' },
+    scenarios: [screen('today', 'pass'), screen('jobs'), screen('more')],
+  }
+
+  it('goes straight on to the next unchecked screen', () => {
+    const results = { ...resultsFrom(tour), 'jobs:0': 'pass' as const }
+    expect(afterScenario(tour, results, 'jobs')).toEqual({ view: 'brief', key: 'more' })
+  })
+
+  it('goes back to the list once every screen is checked', () => {
+    const results = { 'today:0': 'pass', 'jobs:0': 'fail', 'more:0': 'pass' } as const
+    expect(afterScenario(tour, results, 'more')).toEqual({ view: 'list' })
+  })
+
+  it('keeps the per-scenario summary for a normal checklist', () => {
+    const results = { ...resultsFrom(checklist), 'pin:1': 'pass', 'pin:2': 'pass' } as const
+    expect(afterScenario(checklist, results, 'pin')).toEqual({ view: 'done', key: 'pin' })
+  })
+
+  it('numbers screens', () => {
+    expect(screenPosition(tour, 'jobs')).toBe('Screen 2 of 3')
+  })
+})
+
 describe('popoverPlacement', () => {
   const bounds = { width: 393, height: 852, insetTop: 60, insetBottom: 34 }
 
@@ -129,5 +167,17 @@ describe('setupLineStates', () => {
     expect(setupLineStates(lines, 'signing_in')).toEqual(['active', 'done', 'waiting', 'waiting'])
     expect(setupLineStates(lines, 'opening')).toEqual(['done', 'done', 'done', 'active'])
     expect(setupLineStates(lines, 'done')).toEqual(['done', 'done', 'done', 'done'])
+  })
+})
+
+describe('openableRoute', () => {
+  it('opens plain routes and drops Expo Router groups', () => {
+    expect(openableRoute('/jobs')).toBe('/jobs')
+    expect(openableRoute('/(employer)/jobs/new')).toBe('/jobs/new')
+    expect(openableRoute('/')).toBe('/')
+  })
+
+  it('skips routes that need an ID from seeded data', () => {
+    expect(openableRoute('/jobs/[jobId]')).toBeNull()
   })
 })

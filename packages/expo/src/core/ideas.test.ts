@@ -1,15 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   approveMessage,
+  approvePr,
+  fetchFeed,
   fetchIdeas,
   fetchOpenPrs,
+  fixReport,
   type Idea,
   ideaAction,
   ideasNeedingYou,
   isMoving,
   newlyWaiting,
+  type OpenPr,
+  prReadyUrl,
+  prsToReview,
+  type Report,
   replyToIdea,
+  reportsNeedingYou,
   sendStaffReport,
+  setPrNotifications,
   stepTime,
   submitIdea,
 } from './ideas.js'
@@ -190,7 +199,115 @@ describe('app key callers', () => {
       ok: true,
       issueNumber: 12,
       issueUrl: 'https://github.com/a/b/issues/12',
+      fixing: false,
     })
     expect((fetch.mock.calls[0] as unknown as [string])[0]).toBe('https://t.dev/api/v1/reports')
+  })
+})
+
+const report = {
+  id: 'r1',
+  title: 'Header is not a header',
+  statusLine: 'Claude is fixing it',
+  fix: { status: 'fixing' },
+  canFix: false,
+} as Report
+
+describe('bug reports', () => {
+  it('reads reports alongside ideas, and none from an older server', async () => {
+    expect(
+      await fetchFeed(caller, 'ios', {
+        apiUrl,
+        fetch: respond(200, { ideas: [idea], reports: [report] }),
+      }),
+    ).toEqual({ ideas: [idea], reports: [report] })
+    expect(
+      await fetchFeed(caller, 'ios', { apiUrl, fetch: respond(200, { ideas: [idea] }) }),
+    ).toEqual({
+      ideas: [idea],
+      reports: [],
+    })
+    expect(await fetchIdeas(caller, 'ios', { apiUrl, fetch: respond(500, {}) })).toEqual([])
+  })
+
+  it('starts Fix with Claude on a report', async () => {
+    const fetch = respond(200, { report, fix: 'started' })
+    const result = await fixReport(
+      { caller: { kind: 'key', appKey: 'k'.repeat(30) }, platform: 'ios', id: 'r1', by: 'Sam' },
+      { apiUrl, fetch },
+    )
+    expect(result).toEqual({ ok: true, report })
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://t.dev/api/v1/reports/r1/fix')
+    expect(JSON.parse(String(init.body))).toEqual({
+      apiVersion: 1,
+      appKey: 'k'.repeat(30),
+      platform: 'ios',
+      by: 'Sam',
+    })
+  })
+
+  it('counts fixes ready to test', () => {
+    const ready = { ...report, id: 'r2', fix: { ...report.fix, status: 'ready' } } as Report
+    expect(reportsNeedingYou([report, ready])).toBe(1)
+  })
+
+  it('says when Claude started on a filed report', async () => {
+    const result = await sendStaffReport(
+      { appKey: 'k'.repeat(30), platform: 'ios', report: { body: 'Broken' } },
+      { apiUrl, fetch: respond(201, { issueNumber: 9, issueUrl: 'u', fix: 'started' }) },
+    )
+    expect(result).toEqual({ ok: true, issueNumber: 9, issueUrl: 'u', fixing: true })
+  })
+})
+
+describe('approving a PR', () => {
+  it('posts the build credential and who approved, and says what happened', async () => {
+    const fetch = respond(200, { pr: 7, result: 'review' })
+    const result = await approvePr({ caller, platform: 'ios', by: 'Jo' }, { apiUrl, fetch })
+    expect(result).toEqual({ ok: true, approve: 'review' })
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(String(url)).toContain('/api/v1/pulls/approve')
+    expect(JSON.parse(String(init.body))).toMatchObject({ updateGroupId: 'g1', by: 'Jo' })
+    expect(
+      (await approvePr({ caller, platform: 'ios' }, { apiUrl, fetch: respond(409, {}) })).ok,
+    ).toBe(false)
+  })
+
+  it('lists only other PRs nobody has approved yet', () => {
+    const pr = (number: number, extra: Partial<OpenPr> = {}) =>
+      ({ number, current: false, ...extra }) as OpenPr
+    expect(
+      prsToReview([pr(1, { current: true }), pr(2, { approved: true }), pr(3)]).map(
+        (p) => p.number,
+      ),
+    ).toEqual([3])
+    expect(prsToReview(null)).toEqual([])
+  })
+})
+
+describe('PR ready notifications', () => {
+  it('opens only Tapthrough PR-ready notifications', () => {
+    expect(prReadyUrl({ tapthrough: 'pr_ready', url: 'exp+app://x' })).toBe('exp+app://x')
+    expect(prReadyUrl({ url: 'exp+app://x' })).toBeNull()
+    expect(prReadyUrl(undefined)).toBeNull()
+  })
+
+  it('registers the device token with the build credential', async () => {
+    const fetch = respond(200, { enabled: true })
+    const result = await setPrNotifications(
+      { preview, platform: 'ios', token: 'ExponentPushToken[abc]', enabled: true, by: 'Jo' },
+      { apiUrl, fetch },
+    )
+    expect(result).toEqual({ ok: true, enabled: true })
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(String(url)).toContain('/api/v1/push-tokens')
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      updateGroupId: 'g1',
+      projectId: 'p1',
+      token: 'ExponentPushToken[abc]',
+      enabled: true,
+      by: 'Jo',
+    })
   })
 })

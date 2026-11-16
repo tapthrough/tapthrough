@@ -72,10 +72,44 @@ export function nextOpenScenario(
   return undefined
 }
 
+/**
+ * Where to go once a scenario's last step is checked: its summary, or in a
+ * walkthrough straight on to the next screen left to check, and back to the
+ * list (which sums up and offers Approve) after the last one.
+ */
+export function afterScenario(
+  checklist: Checklist | null,
+  results: Results,
+  key: string,
+): { view: 'done'; key: string } | { view: 'brief'; key: string } | { view: 'list' } {
+  if (!checklist?.walkthrough) return { view: 'done', key }
+  const next = nextOpenScenario(checklist, results, key)
+  return next ? { view: 'brief', key: next.key } : { view: 'list' }
+}
+
+/** "Screen 3 of 14": where a walkthrough screen sits in the list. */
+export function screenPosition(checklist: Checklist, key: string): string {
+  const index = checklist.scenarios.findIndex((s) => s.key === key)
+  return `Screen ${index + 1} of ${checklist.scenarios.length}`
+}
+
 /** Scenarios in the run that aren't in the PR's plan, for "Other states". */
 export function otherStates(checklist: Checklist): LibraryEntry[] {
   const planned = new Set(checklist.scenarios.map((s) => s.key))
   return (checklist.library ?? []).filter((entry) => !entry.picked && !planned.has(entry.key))
+}
+
+/**
+ * A route the app can go to without seeded data: no `[param]` segments to fill
+ * in. Expo Router groups like `(employer)` aren't in the URL, so they're dropped.
+ */
+export function openableRoute(routePath: string): string | null {
+  if (routePath.includes('[')) return null
+  const path = routePath
+    .split('/')
+    .filter((part) => part && !/^\(.*\)$/.test(part))
+    .join('/')
+  return `/${path}`
 }
 
 export interface Placement {

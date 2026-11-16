@@ -164,6 +164,13 @@ If they say yes, build the hook with [`@tapthrough/seed`](../packages/seed/READM
 to the config plugin, and switch the scenarios' `seed` to the new presets. If not, leave `{ "tier": 0 }`;
 links still open the right screen.
 
+Then ask whether reviewers should get a push notification when a PR is ready to review. If yes, follow
+[step 6 of getting started](getting-started.md#6-tell-reviewers-when-a-pr-is-ready-optional): check
+`package.json` for `expo-notifications` (add it with `npx expo install expo-notifications` if missing,
+and note that this needs a new development build), and pass `tapthroughNotifications` from
+`@tapthrough/expo/notifications` to `<Tapthrough notifications>`. The Apple push key is the user's step:
+add "run `eas credentials -p ios` and set up a push key" to the hand-over list.
+
 ## 7. Keep it current
 
 Add this to the repo's `AGENTS.md` or `CLAUDE.md` (create `AGENTS.md` if neither exists):

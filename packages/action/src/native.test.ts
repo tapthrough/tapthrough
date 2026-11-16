@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildPageUrl, easError, ensureNativeBuild, parseProfiles, pickBuild } from './native.js'
+import {
+  buildPageUrl,
+  easError,
+  easHint,
+  ensureNativeBuild,
+  parseProfiles,
+  pickBuild,
+} from './native.js'
 
 const app = { slug: 'notes', ownerAccount: { name: 'acme' } }
 const build = (id: string, status: string, extra = {}) => ({
@@ -138,5 +145,21 @@ describe('native builds for a PR', () => {
     expect(easError(new Error('token ghs_abcdefghijklmnopqrstuvwxyz0123456789 bad'))).toBe(
       'token *** bad',
     )
+    // EAS prints notes (and a certificate warning) first; the reason comes later.
+    const quota =
+      'This account has used its iOS builds from the Free plan this month, which will reset in 16 days (on Tue Dec 01 2026). Upgrade your plan for more builds.'
+    expect(
+      easError({
+        stderr: [
+          'Resolved "development" environment for the build. Learn more: https://docs.expo.dev/eas/environment-variables/#environments',
+          '\u001b[33mDistribution Certificate is not validated for non-interactive builds.\u001b[39m',
+          'All credentials are ready to build @acme/app (com.acme.app)',
+          quota,
+          '    Error: build command failed.',
+        ].join('\n'),
+      }),
+    ).toBe(quota)
+    expect(easHint(quota, 'ios', 'development')).toContain('--local')
+    expect(easHint('Something else', 'ios', 'development')).toBe('')
   })
 })

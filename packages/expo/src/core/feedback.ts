@@ -243,6 +243,12 @@ export interface Checklist {
   newerBuild?: NewerBuild | null
   library?: LibraryEntry[]
   reset?: ChecklistReset | null
+  /**
+   * Set when the PR only changes shared code (a theme, an API client): each
+   * scenario is one look-over of its screen, and `intro` says what changed.
+   * Older servers omit it.
+   */
+  walkthrough?: { intro: string } | null
 }
 
 /** Whether the Review sheet has anything to show. */

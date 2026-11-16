@@ -53,17 +53,41 @@ function toEntry(build: EasBuild, profile: string): NativeBuild['builds'][number
   }
 }
 
-/** The first useful line of an EAS error, without anything that looks like a token. */
+/** EAS's progress notes, never the reason a build failed. */
+const EAS_INFO =
+  /^(Distribution Certificate is not validated|Resolved ".*" environment|Learn more|Environment variables|Using remote|Loaded "env"|No environment variables|Build details|Waiting for|✔|- )/i
+const EAS_PROBLEM =
+  /used its .*builds|error|fail|missing|invalid|cannot|can['’]t|unable|denied|must|expired|\bnot\b|requires?|limit/i
+/** EAS's last word on any failure; only shown when there's nothing more specific. */
+const EAS_GENERIC = /^Error:\s*(\w+ )?command failed\.?$|^Error:?$/i
+
+/** The line of an EAS error that says what went wrong, without anything that looks like a token. */
 export function easError(error: unknown): string {
   const raw =
     (error as { stderr?: Buffer | string })?.stderr?.toString() ||
     (error instanceof Error ? error.message : String(error))
+  const lines = raw
+    .split('\n')
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: strips ANSI color codes from EAS output
+    .map((l) => l.replace(/\u001b\[[0-9;]*m/g, '').trim())
+    .filter((l) => l && !/^(›|»|at\s)/.test(l) && !EAS_INFO.test(l))
+  // The first line that names a problem; EAS often prints notes before it.
+  const specific = lines.filter((l) => !EAS_GENERIC.test(l))
   const line =
-    raw
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l && !/^(›|»|\s*at\s)/.test(l)) ?? 'EAS gave no details.'
+    specific.find((l) => EAS_PROBLEM.test(l)) ?? specific[0] ?? lines[0] ?? 'EAS gave no details.'
   return line.replace(/[A-Za-z0-9_-]{32,}/g, '***').slice(0, 300)
+}
+
+/** What to do about the EAS errors teams hit most, after the reason. */
+export function easHint(reason: string, platform: 'ios' | 'android', profile: string): string {
+  if (/used its .*builds/i.test(reason)) {
+    return ` Upgrade the Expo plan, or make this build on a Mac with \`eas build --platform ${platform} --profile ${profile} --local\`.`
+  }
+  // New devices since the last build: the ad hoc profile needs Apple to re-sign it.
+  if (/provisioning profile/i.test(reason)) {
+    return ` Run \`eas build --platform ${platform} --profile ${profile}\` once on your computer (it signs in to Apple and updates the profile), then push again.`
+  }
+  return ''
 }
 
 /**
@@ -154,7 +178,8 @@ export function ensureNativeBuild(
       const entry = toEntry(made, profile)
       if (entry) entries.push(entry)
     } catch (error) {
-      message = `Couldn’t start a ${profile} build: ${easError(error)}`
+      const reason = easError(error)
+      message = `Couldn’t start a ${profile} build: ${reason}${easHint(reason, input.platform, profile)}`
     }
   }
   const state: NativeBuild['state'] = started

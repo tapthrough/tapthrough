@@ -1,5 +1,5 @@
 import Constants from 'expo-constants'
-import { usePathname } from 'expo-router'
+import { type Href, router, usePathname } from 'expo-router'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
@@ -45,21 +45,35 @@ import {
 import {
   answerIdea,
   approveMessage,
+  approvePr,
   type Caller,
-  fetchIdeas,
+  fetchFeed,
   fetchOpenPrs,
+  fixReport,
   type Idea,
   type IdeaDraft,
   ideaAction,
   ideasNeedingYou,
   isMoving,
+  type NotificationsAdapter,
   newlyWaiting,
   type OpenPr,
+  type Report,
   replyToIdea,
+  reportsNeedingYou,
   sendStaffReport,
+  setPrNotifications,
   submitIdea,
 } from './core/ideas.js'
-import { nextOpenStep, popoverPlacement, type Results, resultsFrom, stepId } from './core/review.js'
+import {
+  afterScenario,
+  nextOpenStep,
+  openableRoute,
+  popoverPlacement,
+  type Results,
+  resultsFrom,
+  stepId,
+} from './core/review.js'
 import { useLaunchState } from './hooks.js'
 import { Overlay, useBackPress } from './Overlay.js'
 import {
@@ -196,13 +210,19 @@ type Phase = 'idle' | 'loading' | 'open' | 'capturing' | 'composing'
  * to reporting an issue with a screenshot of the screen behind it. It keeps
  * the checklist fresh in the background, so it can say when a newer build is out.
  */
+/** ideaBusy while Approve PR is in flight. */
+const APPROVING = 'approve-pr'
+
 export function ReportButton({
   apiUrl,
   canSetUp,
   appKey,
+  notifications,
 }: {
   apiUrl: string
   canSetUp: boolean
+  /** Set when the app passes `notifications` to `<Tapthrough>`. */
+  notifications?: NotificationsAdapter | undefined
   /** Set on staging and TestFlight builds: feedback works outside PR previews. */
   appKey?: string | undefined
 }) {
@@ -231,7 +251,12 @@ export function ReportButton({
   const [screenshot, setScreenshot] = useState<Screenshot | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [ideas, setIdeas] = useState<Idea[]>([])
+  const [reports, setReports] = useState<Report[]>([])
   const [ideaBusy, setIdeaBusy] = useState<string | null>(null)
+  const [approveNote, setApproveNote] = useState<string | null>(null)
+  /** PR notifications on this device: null until known, or when the app doesn't offer them. */
+  const [push, setPush] = useState<'on' | 'off' | null>(null)
+  const pushSynced = useRef(false)
   const [pulls, setPulls] = useState<OpenPr[] | null>(null)
   const [composerKind, setComposerKind] = useState<'issue' | 'idea'>('issue')
   const launch = useLaunchState()
@@ -262,13 +287,14 @@ export function ReportButton({
 
   async function refresh() {
     if (!caller || !platform) return null
-    const [list, recent] = await Promise.all([
+    const [list, feed] = await Promise.all([
       preview ? fetchChecklist(preview, platform, { apiUrl }) : Promise.resolve(STAFF_CHECKLIST),
-      fetchIdeas(caller, platform, { apiUrl }),
+      fetchFeed(caller, platform, { apiUrl }),
     ])
     if (list) setChecklist(list)
-    setIdeas(recent)
-    const waiting = newlyWaiting(recent, announcedIdeas)
+    setIdeas(feed.ideas)
+    setReports(feed.reports)
+    const waiting = newlyWaiting(feed.ideas, announcedIdeas)
     const newer = list?.newerBuild
     if (newer && !announcedBuilds.has(newer.updateGroupId)) {
       announcedBuilds.add(newer.updateGroupId)
@@ -301,13 +327,18 @@ export function ReportButton({
     }
   }, [caller, platform, apiUrl])
 
-  // Watching an idea that's being written up or built: check every few seconds, not every 30.
+  // Watching an idea being written up or built, or a bug being fixed: check every few seconds, not every 30.
   const watched = nav.view === 'idea' ? ideas.find((i) => i.id === nav.id) : undefined
-  const watching = phase === 'open' && watched !== undefined && isMoving(watched)
+  const watchedReport = nav.view === 'report' ? reports.find((r) => r.id === nav.id) : undefined
+  const watching =
+    phase === 'open' &&
+    ((watched !== undefined && isMoving(watched)) || watchedReport?.fix?.status === 'fixing')
   useEffect(() => {
     if (!watching || !caller || !platform) return
     const timer = setInterval(async () => {
-      setIdeas(await fetchIdeas(caller, platform, { apiUrl }))
+      const feed = await fetchFeed(caller, platform, { apiUrl })
+      setIdeas(feed.ideas)
+      setReports(feed.reports)
     }, IDEA_REFRESH_MS)
     return () => clearInterval(timer)
   }, [watching, caller, platform, apiUrl])
@@ -345,7 +376,8 @@ export function ReportButton({
     const key = setup.key
     const timer = setTimeout(() => {
       setSetup(null)
-      begin(key)
+      // The launch link already opened the screen.
+      begin(key, { navigate: false })
       void refresh()
     }, 700)
     return () => clearTimeout(timer)
@@ -363,11 +395,21 @@ export function ReportButton({
     rememberedName = name.trim()
   }
 
-  /** Starts a scenario's steps where they're left off, or explores another state. */
-  function begin(key: string) {
+  /**
+   * Starts a scenario's steps where they're left off, or opens another state's
+   * screen and gets out of the way. Without a seed hook (or when setup is
+   * skipped) nothing has moved the app yet, so this goes to the scenario's screen.
+   */
+  function begin(key: string, opts: { navigate?: boolean } = { navigate: true }) {
     const scenario = checklist?.scenarios.find((s) => s.key === key)
+    const path = scenario?.routePath ?? checklist?.library?.find((s) => s.key === key)?.routePath
+    if (opts.navigate && path) {
+      const href = openableRoute(path)
+      if (href && href !== pathname) router.push(href as Href)
+    }
     if (!scenario?.steps.length) {
-      go({ view: 'explore', key })
+      go({ view: 'list' }, 'back')
+      close()
       return
     }
     const index = nextOpenStep(scenario, results)
@@ -408,7 +450,7 @@ export function ReportButton({
     // Let the green show, then slide in the next step.
     setTimeout(() => {
       const next = nextOpenStep(scenario, after, index + 1)
-      go(next >= 0 ? { view: 'step', key, index: next } : { view: 'done', key })
+      go(next >= 0 ? { view: 'step', key, index: next } : afterScenario(checklist, after, key))
       if (next < 0) haptics.success()
     }, 280)
     const sent = await sendStepResult(
@@ -471,6 +513,9 @@ export function ReportButton({
     if (checklist) {
       setPhase('open')
       void refresh()
+      // Ready for "Review another PR" once this one is done.
+      if (pulls === null) void showPulls()
+      void syncPush()
       return
     }
     setPhase('loading')
@@ -569,6 +614,25 @@ export function ReportButton({
     replaceIdea(result.idea)
   }
 
+  async function fixBug(id: string) {
+    if (!caller || !platform) return
+    rememberName()
+    haptics.selection()
+    setIdeaBusy(id)
+    const result = await fixReport(
+      { caller, platform, id, ...(rememberedName ? { by: rememberedName } : {}) },
+      { apiUrl },
+    )
+    setIdeaBusy(null)
+    if (!result.ok) {
+      haptics.warning()
+      setError(result.message)
+      return
+    }
+    haptics.success()
+    setReports((current) => current.map((r) => (r.id === id ? result.report : r)))
+  }
+
   async function act(id: string, action: 'build' | 'retry' | 'approve') {
     if (!caller || !platform) return
     rememberName()
@@ -588,6 +652,89 @@ export function ReportButton({
     replaceIdea(
       action === 'approve' ? { ...result.idea, note: approveMessage(result.approve) } : result.idea,
     )
+  }
+
+  /** Approve PR: the checklist passed, or there was nothing to check. */
+  async function approveThisPr() {
+    if (!caller || !platform) return
+    rememberName()
+    haptics.selection()
+    setIdeaBusy(APPROVING)
+    const result = await approvePr(
+      { caller, platform, ...(rememberedName ? { by: rememberedName } : {}) },
+      { apiUrl },
+    )
+    setIdeaBusy(null)
+    if (!result.ok) {
+      haptics.warning()
+      setError(result.message)
+      return
+    }
+    haptics.success()
+    setApproveNote(approveMessage(result.approve))
+    setPulls((list) => list?.map((pr) => (pr.current ? { ...pr, approved: true } : pr)) ?? list)
+  }
+
+  /** Once per session: re-register a device that allows notifications, so its build stays current. */
+  async function syncPush() {
+    if (!notifications || !preview || !platform || pushSynced.current) return
+    pushSynced.current = true
+    try {
+      if (!(await notifications.granted())) {
+        setPush('off')
+        return
+      }
+      const token = await notifications.enable(preview.projectId)
+      if (!token) return setPush('off')
+      const result = await setPrNotifications(
+        {
+          preview,
+          platform,
+          token,
+          enabled: true,
+          ...(rememberedName ? { by: rememberedName } : {}),
+        },
+        { apiUrl },
+      )
+      setPush(result.ok ? 'on' : 'off')
+    } catch {
+      setPush(null)
+    }
+  }
+
+  /** Notify Me About New PRs, from the panel. */
+  async function enablePush() {
+    if (!notifications || !preview || !platform) return
+    haptics.selection()
+    rememberName()
+    let token: string | null = null
+    try {
+      token = await notifications.enable(preview.projectId)
+    } catch {
+      token = null
+    }
+    if (!token) {
+      haptics.warning()
+      setError('Notifications are off for this app. Turn them on in Settings, then try again.')
+      return
+    }
+    const result = await setPrNotifications(
+      {
+        preview,
+        platform,
+        token,
+        enabled: true,
+        ...(rememberedName ? { by: rememberedName } : {}),
+      },
+      { apiUrl },
+    )
+    if (!result.ok) {
+      haptics.warning()
+      setError(result.message)
+      return
+    }
+    haptics.success()
+    setPush('on')
   }
 
   async function showPulls() {
@@ -621,7 +768,7 @@ export function ReportButton({
         go(
           next >= 0
             ? { view: 'step', key: scenario.key, index: next }
-            : { view: 'done', key: scenario.key },
+            : afterScenario(checklist, after, scenario.key),
         )
       }
     }
@@ -680,7 +827,13 @@ export function ReportButton({
           onAnswerIdea={(id, answers) => void answer(id, answers)}
           onReplyIdea={(id, text) => void reply(id, text)}
           onIdeaAction={(id, action) => void act(id, action)}
+          reports={reports}
+          onFixReport={(id) => void fixBug(id)}
           ideaBusy={ideaBusy}
+          approveNote={approveNote}
+          push={push}
+          onEnablePush={() => void enablePush()}
+          onApprovePr={() => void approveThisPr()}
           pulls={pulls}
           onShowPulls={() => void showPulls()}
           onSwitchPr={switchPr}
@@ -695,7 +848,7 @@ export function ReportButton({
       {showButton ? (
         <Bubble
           onPress={toggle}
-          badge={buttonBadge(checklist, ideasNeedingYou(ideas))}
+          badge={buttonBadge(checklist, ideasNeedingYou(ideas) + reportsNeedingYou(reports))}
           busy={phase === 'loading'}
           active={phase === 'open'}
           onRest={setAnchor}
@@ -708,8 +861,8 @@ export function ReportButton({
           route={pathname}
           branch={preview?.branch}
           staff={staffMode ? appLabel() : null}
-          onSendStaff={(input) =>
-            sendStaffReport(
+          onSendStaff={async (input) => {
+            const result = await sendStaffReport(
               {
                 appKey: appKey ?? '',
                 platform,
@@ -723,7 +876,10 @@ export function ReportButton({
               },
               { apiUrl },
             )
-          }
+            // So it's under Bugs, with its fix, when the menu opens next.
+            if (result.ok) void refresh()
+            return result
+          }}
           device={deviceLabel()}
           hasScenario={Boolean(controller.lastScenarioId())}
           failedStep={failing?.step ?? null}
@@ -1002,7 +1158,7 @@ type Status =
   | { kind: 'error'; message: string }
   | { kind: 'idea_sent'; idea: Idea; emailed: boolean }
   /** A staff build's report, filed straight as a GitHub issue. */
-  | { kind: 'filed'; issueNumber: number; issueUrl: string }
+  | { kind: 'filed'; issueNumber: number; issueUrl: string; fixing: boolean }
 
 function Composer({
   screenshot,
@@ -1111,7 +1267,12 @@ function Composer({
     }
     haptics.success()
     Keyboard.dismiss()
-    setStatus({ kind: 'filed', issueNumber: result.issueNumber, issueUrl: result.issueUrl })
+    setStatus({
+      kind: 'filed',
+      issueNumber: result.issueNumber,
+      issueUrl: result.issueUrl,
+      fixing: result.fixing,
+    })
   }
 
   async function send() {
@@ -1165,7 +1326,12 @@ function Composer({
         scrim={status.kind === 'sent' || status.kind === 'idea_sent' || status.kind === 'filed'}
       >
         {status.kind === 'filed' ? (
-          <Filed issueNumber={status.issueNumber} issueUrl={status.issueUrl} onClose={onClose} />
+          <Filed
+            issueNumber={status.issueNumber}
+            issueUrl={status.issueUrl}
+            fixing={status.fixing}
+            onClose={onClose}
+          />
         ) : status.kind === 'idea_sent' ? (
           <IdeaSent
             emailed={status.emailed}
@@ -1449,10 +1615,12 @@ function issueStatus(number: number, fix: IssueFix): string {
 function Filed({
   issueNumber,
   issueUrl,
+  fixing,
   onClose,
 }: {
   issueNumber: number
   issueUrl: string
+  fixing: boolean
   onClose: () => void
 }) {
   const colors = useColors()
@@ -1467,7 +1635,9 @@ function Filed({
           <Icon name="checkmark" size={22} color={colors.tint} />
         </View>
         <Text style={[text.subhead, styles.center, { color: colors.label }]}>
-          Created issue #{issueNumber} with your screenshot and details. The team sees it on GitHub.
+          {fixing
+            ? `Created issue #${issueNumber} with your screenshot and details, and Claude started on a fix. Follow it under Bugs in the Review menu.`
+            : `Created issue #${issueNumber} with your screenshot and details. The team sees it on GitHub.`}
         </Text>
         <Capsule title="View on GitHub" kind="plain" onPress={() => Linking.openURL(issueUrl)} />
         <Capsule title="Done" onPress={onClose} />

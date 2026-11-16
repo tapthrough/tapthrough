@@ -66,7 +66,40 @@ export interface OpenPr {
   pageUrl?: string | null
   needsNewBuild: boolean
   fromIdea: boolean
+  /** Someone approved it in the app. Older servers omit it. */
+  approved?: boolean
+  /** Checklist items on its latest build; 0 means look around and approve. Older servers omit it. */
+  toCheck?: number
   updatedAt: string
+}
+
+/** Other open PRs still waiting for a review. */
+export function prsToReview(pulls: OpenPr[] | null): OpenPr[] {
+  return (pulls ?? []).filter((pr) => !pr.current && !pr.approved)
+}
+
+/** Approves the PR whose build is running, after testing it. Never throws. */
+export function approvePr(
+  input: { caller: Caller; platform: Platform; by?: string },
+  options: Options,
+) {
+  return call(
+    options,
+    '/api/v1/pulls/approve',
+    {
+      method: 'POST',
+      body: { ...credential(input.caller, input.platform), ...(input.by ? { by: input.by } : {}) },
+    },
+    (body) =>
+      typeof body.pr === 'number'
+        ? {
+            approve:
+              body.result === 'review' || body.result === 'auto_merge' || body.result === 'merged'
+                ? (body.result as ApproveOutcome)
+                : null,
+          }
+        : undefined,
+  )
 }
 
 export type ApproveOutcome = 'review' | 'auto_merge' | 'merged'
@@ -176,17 +209,89 @@ export function submitIdea(
   )
 }
 
+/** Where Claude's fix of a reported bug is. */
+export type ReportFixStatus =
+  | 'fixing'
+  | 'ready'
+  | 'merged'
+  | 'closed'
+  | 'declined'
+  | 'failed'
+  | 'not_set_up'
+
+/** A bug sent from a staging or TestFlight build: its issue, and Claude's fix. */
+export interface Report {
+  id: string
+  title: string
+  reporterName: string | null
+  issueNumber: number
+  issueUrl: string
+  fix: {
+    status: ReportFixStatus
+    prNumber: number | null
+    prUrl: string | null
+    /** The fix PR's Tapthrough page, to install or open its build. */
+    pageUrl: string | null
+    /** Claude's own words: what it changed, or why it didn't. */
+    summary: string | null
+    runUrl: string | null
+  } | null
+  statusLine: string
+  /** Fix with Claude can start (again). */
+  canFix: boolean
+  createdAt: string
+}
+
+/** The app's recent ideas and bug reports, newest first; empty lists when Tapthrough can't say. */
+export async function fetchFeed(
+  caller: Caller,
+  platform: Platform,
+  options: Options,
+): Promise<{ ideas: Idea[]; reports: Report[] }> {
+  const path = `/api/v1/ideas?${query(caller, platform)}`
+  const result = await call(options, path, { method: 'GET' }, (body) =>
+    Array.isArray(body.ideas)
+      ? {
+          ideas: body.ideas as Idea[],
+          // Servers before reports send none.
+          reports: Array.isArray(body.reports) ? (body.reports as Report[]) : [],
+        }
+      : undefined,
+  )
+  return result.ok ? { ideas: result.ideas, reports: result.reports } : { ideas: [], reports: [] }
+}
+
 /** The app's recent ideas, newest first; an empty list when Tapthrough can't say. */
 export async function fetchIdeas(
   caller: Caller,
   platform: Platform,
   options: Options,
 ): Promise<Idea[]> {
-  const path = `/api/v1/ideas?${query(caller, platform)}`
-  const result = await call(options, path, { method: 'GET' }, (body) =>
-    Array.isArray(body.ideas) ? { ideas: body.ideas as Idea[] } : undefined,
+  return (await fetchFeed(caller, platform, options)).ideas
+}
+
+/** Fix with Claude on a reported bug: starts a fix, or tries again. Never throws. */
+export function fixReport(
+  input: { caller: Caller; platform: Platform; id: string; by?: string },
+  options: Options,
+) {
+  return call(
+    options,
+    `/api/v1/reports/${encodeURIComponent(input.id)}/fix`,
+    {
+      method: 'POST',
+      body: { ...credential(input.caller, input.platform), ...(input.by ? { by: input.by } : {}) },
+    },
+    (body) =>
+      body.report && typeof body.report === 'object'
+        ? { report: body.report as Report }
+        : undefined,
   )
-  return result.ok ? result.ideas : []
+}
+
+/** Bugs whose fix is ready to test. */
+export function reportsNeedingYou(reports: Report[]): number {
+  return reports.filter((r) => r.fix?.status === 'ready').length
 }
 
 /** The repo's open PRs with previews; null when Tapthrough can't say. */
@@ -371,7 +476,57 @@ export function sendStaffReport(
     },
     (body) =>
       typeof body.issueNumber === 'number' && typeof body.issueUrl === 'string'
-        ? { issueNumber: body.issueNumber, issueUrl: body.issueUrl }
+        ? {
+            issueNumber: body.issueNumber,
+            issueUrl: body.issueUrl,
+            // Whether Claude started fixing it; servers before this say nothing.
+            fixing: body.fix === 'started',
+          }
         : undefined,
+  )
+}
+
+/**
+ * Push notifications, from `@tapthrough/expo/notifications`. Kept out of the
+ * main entry so apps without `expo-notifications` don't need it.
+ */
+export interface NotificationsAdapter {
+  /** Whether this device already allows notifications. */
+  granted(): Promise<boolean>
+  /** Asks permission if needed, then returns the Expo push token, or null if declined. */
+  enable(projectId: string): Promise<string | null>
+  /** Calls back with each tapped notification's data, including the one that launched the app. */
+  onOpen(handler: (data: Record<string, unknown>) => void): () => void
+}
+
+/** The PR build a tapped "PR ready" notification opens, or null for any other notification. */
+export function prReadyUrl(data: Record<string, unknown> | undefined): string | null {
+  return data?.tapthrough === 'pr_ready' && typeof data.url === 'string' ? data.url : null
+}
+
+/** Turns "PR ready to review" notifications on or off for this device. Never throws. */
+export function setPrNotifications(
+  input: {
+    preview: PreviewContext
+    platform: Platform
+    token: string
+    enabled: boolean
+    by?: string
+  },
+  options: Options,
+) {
+  return call(
+    options,
+    '/api/v1/push-tokens',
+    {
+      method: 'POST',
+      body: {
+        ...credential({ kind: 'build', preview: input.preview }, input.platform),
+        token: input.token,
+        enabled: input.enabled,
+        ...(input.by ? { by: input.by } : {}),
+      },
+    },
+    (body) => (typeof body.enabled === 'boolean' ? { enabled: body.enabled } : undefined),
   )
 }

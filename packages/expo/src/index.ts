@@ -1,5 +1,6 @@
 export type { LaunchState } from './core/controller.js'
 export { getFlagOverride, getFlagOverrides } from './core/flags.js'
+export type { NotificationsAdapter } from './core/ideas.js'
 export type { AuthAdapter, LaunchError, ResetTarget } from './core/launch.js'
 export { resetQueryClient, resetStorage, resetStores } from './core/reset.js'
 export { LAUNCH_PATH, parseLaunchUrl } from './core/url.js'

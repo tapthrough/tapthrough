@@ -25,6 +25,10 @@ Each PR runs the scenarios it touches, and the comment says why for each one:
   (for example, `note-form.tsx` reaches `/notes/new` and `/notes/[id]/edit`).
 - **Scenario updated:** the PR changes the scenario file itself.
 
+When a PR only changes code most screens share, such as a theme or an API client, Tapthrough doesn't list
+every screen's full checklist. Reviewers get a walkthrough instead: one line saying what changed (from the
+PR title), then each screen that uses the shared code, one at a time, with a single Pass or Fail.
+
 The rest of the library stays available from the app's Review menu. When none match, the comment says so.
 A few scenarios per screen, written once, cover every PR after that, and agents can write them too, since
 they're plain JSON. `npx @tapthrough/cli map` lists the screens that don't have one yet, and

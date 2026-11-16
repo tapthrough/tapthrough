@@ -20121,10 +20121,24 @@ function toEntry(build, profile) {
     status: build.status
   };
 }
+var EAS_INFO = /^(Distribution Certificate is not validated|Resolved ".*" environment|Learn more|Environment variables|Using remote|Loaded "env"|No environment variables|Build details|Waiting for|✔|- )/i;
+var EAS_PROBLEM = /used its .*builds|error|fail|missing|invalid|cannot|can['’]t|unable|denied|must|expired|\bnot\b|requires?|limit/i;
+var EAS_GENERIC = /^Error:\s*(\w+ )?command failed\.?$|^Error:?$/i;
 function easError(error62) {
   const raw = error62?.stderr?.toString() || (error62 instanceof Error ? error62.message : String(error62));
-  const line = raw.split("\n").map((l) => l.trim()).find((l) => l && !/^(›|»|\s*at\s)/.test(l)) ?? "EAS gave no details.";
+  const lines = raw.split("\n").map((l) => l.replace(/\u001b\[[0-9;]*m/g, "").trim()).filter((l) => l && !/^(›|»|at\s)/.test(l) && !EAS_INFO.test(l));
+  const specific = lines.filter((l) => !EAS_GENERIC.test(l));
+  const line = specific.find((l) => EAS_PROBLEM.test(l)) ?? specific[0] ?? lines[0] ?? "EAS gave no details.";
   return line.replace(/[A-Za-z0-9_-]{32,}/g, "***").slice(0, 300);
+}
+function easHint(reason, platform, profile) {
+  if (/used its .*builds/i.test(reason)) {
+    return ` Upgrade the Expo plan, or make this build on a Mac with \`eas build --platform ${platform} --profile ${profile} --local\`.`;
+  }
+  if (/provisioning profile/i.test(reason)) {
+    return ` Run \`eas build --platform ${platform} --profile ${profile}\` once on your computer (it signs in to Apple and updates the profile), then push again.`;
+  }
+  return "";
 }
 function ensureNativeBuild(eas, input3) {
   if (input3.profiles.length === 0) return { state: "off", builds: [] };
@@ -20203,7 +20217,8 @@ function ensureNativeBuild(eas, input3) {
       const entry = toEntry(made, profile);
       if (entry) entries.push(entry);
     } catch (error62) {
-      message = `Couldn\u2019t start a ${profile} build: ${easError(error62)}`;
+      const reason = easError(error62);
+      message = `Couldn\u2019t start a ${profile} build: ${reason}${easHint(reason, input3.platform, profile)}`;
     }
   }
   const state = started ? "started" : building ? "building" : entries.length > 0 ? "found" : skipped && !message ? "off" : "failed";

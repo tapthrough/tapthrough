@@ -60,7 +60,9 @@ the key isn't written into the build at all.
 The round button opens **Feedback**:
 
 - **Report Issue.** Write what's wrong, mark up the screenshot, and send. It becomes a GitHub issue
-  labeled `bug` and `tapthrough:report`, and the app shows its number and a link.
+  labeled `bug` and `tapthrough:report`, and Claude starts fixing it right away from the screenshot, the
+  screen and the app's logs. It opens a PR with its own preview to test. This needs the
+  [Fix with Claude workflow](fix-with-claude.md); without it, the issue says how to add it.
 - **Share Idea.** Claude writes it up as an issue, asks questions first if it needs to, and can build it
   into a PR. Idea issues are labeled `enhancement` and `tapthrough:idea`. See [Ideas from the app](ideas.md).
 
@@ -68,10 +70,14 @@ If your organization uses GitHub issue types, reports also get the **Bug** type 
 type. Without them, the labels alone tell them apart.
 - **Ideas.** Every idea with where it is: written up, building, ready to test, merged. If something is
   stuck, it says so.
+- **Bugs.** Every report with its fix: Claude fixing it, fix ready to test on PR #n, merged, or why
+  Claude didn't change anything. **Fix with Claude** starts a fix, or tries again.
 
 ## Limits
 
 - 30 reports per repo per day from staging builds. Ideas share the [usual limits](ideas.md#limits).
-- Claude never starts on these issues by itself; add the `tapthrough:fix` label if you want it to.
+- To file reports as issues only, set `"autoFixIssues": false` in `.tapthrough/settings.json`. Testers can
+  still tap **Fix with Claude** on one, or you can add the `tapthrough:fix` label.
+- Fixes share the [Fix with Claude limit](fix-with-claude.md): 5 issue fixes per repo per day.
 - Anyone with the build has the key, and the key is in the build. Don't turn `staff` on for builds
   outside your testers. If a key leaks, tell us and we'll rotate it.
