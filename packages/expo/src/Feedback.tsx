@@ -66,6 +66,7 @@ import {
   submitIdea,
 } from './core/ideas.js'
 import {
+  afterScenario,
   nextOpenStep,
   openableRoute,
   popoverPlacement,
@@ -449,7 +450,7 @@ export function ReportButton({
     // Let the green show, then slide in the next step.
     setTimeout(() => {
       const next = nextOpenStep(scenario, after, index + 1)
-      go(next >= 0 ? { view: 'step', key, index: next } : { view: 'done', key })
+      go(next >= 0 ? { view: 'step', key, index: next } : afterScenario(checklist, after, key))
       if (next < 0) haptics.success()
     }, 280)
     const sent = await sendStepResult(
@@ -767,7 +768,7 @@ export function ReportButton({
         go(
           next >= 0
             ? { view: 'step', key: scenario.key, index: next }
-            : { view: 'done', key: scenario.key },
+            : afterScenario(checklist, after, scenario.key),
         )
       }
     }

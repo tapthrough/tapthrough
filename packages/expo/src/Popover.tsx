@@ -36,6 +36,7 @@ import {
   type ScenarioProgress,
   type SetupProgress,
   scenarioProgress,
+  screenPosition,
   setupLineStates,
   stepId,
 } from './core/review.js'
@@ -370,9 +371,13 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
   } else if (nothingPlanned) {
     lead = 'Nothing to check on this PR. Look around the app, report anything off, then approve it.'
   } else if (finished) {
+    const unit = checklist.walkthrough ? 'screen' : 'step'
     lead = failed
-      ? `${failed} step${failed === 1 ? '' : 's'} failed, and your reports are on PR #${checklist.pr}. Fixed now? Check again and tap Pass.`
+      ? `${failed} ${unit}${failed === 1 ? '' : 's'} failed, and your reports are on PR #${checklist.pr}. Fixed now? Check again and tap Pass.`
       : `Everything passed. Approve PR #${checklist.pr} to tell the team it’s good to merge.`
+  } else if (done === 0 && recheck.length === 0 && checklist.walkthrough) {
+    // Only shared code changed: say what changed, then go screen by screen.
+    lead = checklist.walkthrough.intro
   } else if (done === 0 && recheck.length === 0) {
     lead = `Check ${total === 1 ? 'this' : `these ${total}`} on PR #${checklist.pr}. Each one sets the app up and walks you through it.`
   } else {
@@ -480,7 +485,12 @@ function prListView(p: ReviewPopoverProps, colors: Colors): Screen {
                   colors={colors}
                   lead={<ProgressMark progress={progress} colors={colors} />}
                   title={scenario.title}
-                  subtitle={scenarioSubtitle(scenario, progress, p.canSetUp)}
+                  subtitle={scenarioSubtitle(
+                    scenario,
+                    progress,
+                    p.canSetUp,
+                    Boolean(checklist.walkthrough),
+                  )}
                   onPress={() => p.onNav(openScenario(scenario, results), 'forward')}
                 />
               )
@@ -1210,7 +1220,15 @@ function scenarioSubtitle(
   scenario: ChecklistScenario,
   progress: ScenarioProgress,
   canSetUp: boolean,
+  walkthrough = false,
 ) {
+  if (walkthrough) {
+    // One look-over per screen, so no step counts.
+    if (progress.state === 'failed') return 'Failed'
+    if (progress.state === 'passed') return 'Passed'
+    if (!scenario.setup?.length) return 'Not checked yet'
+    return canSetUp ? 'Sets itself up' : 'Set up by hand'
+  }
   const steps = `${progress.total} step${progress.total === 1 ? '' : 's'}`
   if (progress.state === 'new') {
     if (!scenario.setup?.length) return steps
@@ -1230,7 +1248,9 @@ function briefView(p: ReviewPopoverProps, entry: Entry, colors: Colors): Screen 
     title: entry.title,
     subtitle: entry.other
       ? 'Another state of the app'
-      : `${steps.length} step${steps.length === 1 ? '' : 's'}`,
+      : p.checklist.walkthrough
+        ? screenPosition(p.checklist, entry.key)
+        : `${steps.length} step${steps.length === 1 ? '' : 's'}`,
     back: true,
     body: (
       <>
@@ -1330,7 +1350,9 @@ function stepView(
   const result = p.results[stepId(scenario.key, step.index)]
   return {
     title: entry.title,
-    subtitle: `Step ${index + 1} of ${scenario.steps.length}`,
+    subtitle: p.checklist.walkthrough
+      ? screenPosition(p.checklist, scenario.key)
+      : `Step ${index + 1} of ${scenario.steps.length}`,
     back: true,
     body: (
       <>
