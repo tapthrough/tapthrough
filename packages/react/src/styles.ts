@@ -15,6 +15,7 @@ button, textarea, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
 :focus-visible { outline: 2px solid #8ab4ff; outline-offset: 2px; }
+[hidden] { display: none !important; }
 
 .launcher {
   position: fixed; right: 16px; bottom: 16px; z-index: 2147483000;
@@ -57,6 +58,11 @@ button:disabled { cursor: default; opacity: .55; }
 .route { color: #a3a3a3; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
 .row { display: flex; align-items: center; gap: 8px; }
 .link { padding: 0; border: 0; background: none; color: #8ab4ff; font-size: 13px; text-decoration: underline; }
+.why { margin: 4px 0 0; color: #a3a3a3; font-size: 12px; }
+.empty { margin-top: 16px; }
+.attach { display: flex; gap: 14px; margin-top: 8px; }
+.shot { display: flex; align-items: flex-end; gap: 12px; margin-top: 8px; }
+.shot img { max-width: 140px; max-height: 96px; border: 1px solid #444; border-radius: 6px; object-fit: cover; }
 
 .steps { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
 .step { padding: 12px; border: 1px solid #2f2f2f; border-radius: 12px; background: #202020; }
