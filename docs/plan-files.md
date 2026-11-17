@@ -72,9 +72,9 @@ at the PR's latest commit, so editing it in a new push updates the comment.
 | --- | --- | --- |
 | `key` | In plan files | The file name in the library. Lowercase letters, digits and dashes. Keep it stable across pushes; links and checklist results use it. |
 | `title` | Yes | Shown in the PR comment and the app, e.g. "Edit note: empty title" |
-| `route.path` | Yes | An Expo Router path, with `[param]` segments |
+| `route.path` | Yes | A page's path as the file router has it (Expo Router or the Next.js App Router), with `[param]` segments |
 | `route.params` | No | Values for the segments. `$seed.<path>` points at data your seed hook returned, e.g. `$seed.notes[0].id`. |
-| `seed` | Yes | `{ "tier": 2, "preset": "<name>", "params": { … }, "role": "viewer" }` runs a preset from your seed hook. `{ "tier": 0 }` signs in to your shared test account instead. |
+| `seed` | Yes | `{ "tier": 2, "preset": "<name>", "params": { … }, "role": "viewer" }` runs a preset from your seed hook. `{ "tier": 0 }` signs in to your shared test account instead. Web apps running with `test-data: "off"` always use `{ "tier": 0 }`; it has no effect there. |
 | `flags` | No | Feature flags the app sees while reviewing; read them with `useFlagOverride` |
 | `steps` | No | Up to 10 `{ "action", "expect" }` pairs; reviewers pass or fail each one in the app |
 

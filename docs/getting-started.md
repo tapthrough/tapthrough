@@ -5,6 +5,8 @@ the PR's code on the right screen, already signed in with test data, plus a chec
 Reviewers, including people who don't write code, check off steps and report issues from inside the app.
 Everything lands back on the PR.
 
+Using Next.js? See [getting started with Next.js](getting-started-nextjs.md).
+
 This guide takes about 30 minutes for a typical Expo Router app. Or hand it to your coding agent: paste
 `Read https://raw.githubusercontent.com/tapthrough/tapthrough/main/docs/onboard-with-your-agent.md and follow
 it step by step` into Claude Code, Cursor or Codex. See [set up with your coding agent](onboard-with-your-agent.md).

@@ -1,6 +1,6 @@
 {
   "name": "@tapthrough/react",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tapthrough's Review panel for React web apps: the PR's checklist, pass and fail, and reports, inside the preview",
   "license": "MIT",
   "repository": {

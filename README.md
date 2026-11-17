@@ -9,6 +9,7 @@ and the shared protocol. The hosted service lives in a separate, private repo.
 ## Docs
 
 - [Getting started](docs/getting-started.md): set up Tapthrough on an Expo app in about 30 minutes
+- [Getting started with Next.js](docs/getting-started-nextjs.md): set it up on a Next.js app's Vercel previews in about 10 minutes (beta)
 - [Set up with your coding agent](docs/onboard-with-your-agent.md): one line for Claude Code, Cursor or Codex
 - [Plan files](docs/plan-files.md): land reviewers on the right screen with test data and a checklist
 - [Map your screens](docs/scenario-map.md): see which screens have scenarios, and check scenario files
