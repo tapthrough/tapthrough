@@ -220,6 +220,17 @@ describe('Panel', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Review/ }))
   })
 
+  it('sits beside the page on a wide window instead of covering it, and gives the room back', async () => {
+    document.documentElement.style.marginRight = '4px'
+    const { user } = setup()
+    expect(document.documentElement.style.marginRight).toBe('4px')
+    await openPanel(user)
+    expect(document.documentElement.style.marginRight).toBe('380px')
+    await user.keyboard('{Escape}')
+    expect(document.documentElement.style.marginRight).toBe('4px')
+    document.documentElement.style.marginRight = ''
+  })
+
   it('sets a scenario up by going to the link Tapthrough returns', async () => {
     const { user, navigate, sent } = setup()
     const panel = await openPanel(user)
@@ -306,10 +317,12 @@ describe('Panel', () => {
     })
     let release: (value: null) => void = () => {}
     let hiddenDuringCapture: boolean | undefined
+    let marginDuringCapture: string | undefined
     const captureTab = vi.fn(
       () =>
         new Promise<null>((resolve) => {
           hiddenDuringCapture = document.querySelector('.root')?.hasAttribute('hidden')
+          marginDuringCapture = document.documentElement.style.marginRight
           release = resolve
         }),
     )
@@ -321,6 +334,8 @@ describe('Panel', () => {
     )
     await waitFor(() => expect(captureTab).toHaveBeenCalled())
     expect(hiddenDuringCapture).toBe(true)
+    // The page is back at its full width for the screenshot.
+    expect(marginDuringCapture).toBe('')
     await act(async () => release(null))
     await waitFor(() => expect(document.querySelector('.root')?.hasAttribute('hidden')).toBe(false))
     // Cancelling the browser's prompt attaches nothing and says nothing.
