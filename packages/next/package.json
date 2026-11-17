@@ -21,6 +21,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./panel": {
+      "types": "./dist/panel.d.ts",
+      "default": "./dist/panel.js"
+    },
     "./authjs": {
       "types": "./dist/authjs.d.ts",
       "default": "./dist/authjs.js"
@@ -39,10 +43,13 @@
   },
   "dependencies": {
     "@tapthrough/core": "workspace:^",
-    "@tapthrough/protocol": "workspace:^"
+    "@tapthrough/protocol": "workspace:^",
+    "@tapthrough/react": "workspace:^"
   },
   "peerDependencies": {
-    "@supabase/ssr": ">=0.5"
+    "@supabase/ssr": ">=0.5",
+    "react": ">=18",
+    "react-dom": ">=18"
   },
   "peerDependenciesMeta": {
     "@supabase/ssr": {
@@ -51,6 +58,9 @@
   },
   "devDependencies": {
     "@supabase/ssr": "0.10.3",
-    "@supabase/supabase-js": "2.118.0"
+    "@supabase/supabase-js": "2.118.0",
+    "@types/react": "19.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   }
 }
