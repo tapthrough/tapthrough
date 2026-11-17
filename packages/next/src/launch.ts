@@ -6,7 +6,8 @@ import { encodeState, STATE_COOKIE, STATE_MAX_AGE_SECONDS } from './state.js'
 
 /** Logs the browser in with the session the seed hook created, by setting cookies. */
 export interface ServerAuthAdapter {
-  signIn(session: Record<string, unknown>, cookies: CookieJar): Promise<void>
+  /** `request` is the launch request, for adapters that need its protocol or host. */
+  signIn(session: Record<string, unknown>, cookies: CookieJar, request: Request): Promise<void>
 }
 
 export interface LaunchRouteOptions {
@@ -115,7 +116,9 @@ export function createLaunchRoute(
           for (const name of options.clearCookies ?? []) jar.set(name, '', { maxAge: 0 })
         },
       ],
-      auth: { signIn: (session) => options.auth?.signIn(session, jar) ?? Promise.resolve() },
+      auth: {
+        signIn: (session) => options.auth?.signIn(session, jar, request) ?? Promise.resolve(),
+      },
       applyFlags: (next) => {
         flags = next
       },

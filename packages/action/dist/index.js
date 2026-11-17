@@ -19730,6 +19730,7 @@ function date4(params) {
 // ../protocol/dist/scenario.js
 var Platform = external_exports.enum(["ios", "android", "web"]);
 var NativePlatform = external_exports.enum(["ios", "android"]);
+var WEB_LAUNCH_PATH = "/api/tapthrough/launch";
 var TestStep = external_exports.object({
   /** What the reviewer does: "Clear the title and tap Save". */
   action: external_exports.string().min(1),
@@ -20050,6 +20051,55 @@ function routesFromFiles(appDir, files) {
   }
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
+var NEXT_PAGE = /(^|\/)page\.(tsx|ts|jsx|js|mdx|md)$/;
+var INTERCEPTING = /^\(\.{1,3}\)/;
+function nextRoutesFromFiles(appDir, files) {
+  const prefix = `${appDir.replace(/\/$/, "")}/`;
+  const byPath = /* @__PURE__ */ new Map();
+  for (const file2 of [...files].sort()) {
+    if (!file2.startsWith(prefix) || !NEXT_PAGE.test(file2))
+      continue;
+    const segments = file2.slice(prefix.length).split("/").slice(0, -1);
+    if (segments.some((s) => s.startsWith("_") || INTERCEPTING.test(s)))
+      continue;
+    const urlSegments = segments.filter((s) => !(s.startsWith("(") && s.endsWith(")")) && !s.startsWith("@")).map((s) => s.replace(/^\[\[(\.\.\.[^\]]+)\]\]$/, "[$1]"));
+    const path3 = `/${urlSegments.join("/")}`;
+    const inSlot = segments.some((s) => s.startsWith("@"));
+    if (!byPath.has(path3) || !inSlot)
+      byPath.set(path3, { path: path3, file: file2 });
+  }
+  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+function detectFramework(packageJson) {
+  if (!packageJson)
+    return null;
+  let deps;
+  try {
+    const json2 = JSON.parse(packageJson);
+    deps = { ...json2.devDependencies, ...json2.dependencies };
+  } catch {
+    return null;
+  }
+  if ("expo-router" in deps || "expo" in deps)
+    return "expo-router";
+  if ("next" in deps)
+    return "next-app";
+  return null;
+}
+function frameworkRoutes(framework, appDir, files) {
+  return framework === "next-app" ? nextRoutesFromFiles(appDir, files) : routesFromFiles(appDir, files);
+}
+var EXPO_SHELL = /(^|\/)(_layout|\+native-intent)\.[cm]?[jt]sx?$/;
+var NEXT_SHELL = /(^|\/)(layout|template|loading|error|not-found|default)\.[cm]?[jt]sx?$/;
+var NEXT_REQUEST_SHELL = /^(src\/)?(proxy|middleware)\.[cm]?[jt]s$/;
+function shellFiles(framework, appRoot, appDir, files) {
+  const inApp = `${appDir.replace(/\/$/, "")}/`;
+  if (framework === "expo-router") {
+    return files.filter((file2) => file2.startsWith(inApp) && EXPO_SHELL.test(file2));
+  }
+  const root = appRoot ? `${appRoot.replace(/\/$/, "")}/` : "";
+  return files.filter((file2) => file2.startsWith(inApp) && NEXT_SHELL.test(file2) || file2.startsWith(root) && NEXT_REQUEST_SHELL.test(file2.slice(root.length)));
+}
 
 // src/eas.ts
 function parseEasUpdateJson(text) {
@@ -20242,6 +20292,100 @@ function parseProfiles(value) {
   ].slice(0, 2);
 }
 
+// src/web.ts
+var POLL_MS = 1e4;
+var FAILED = /* @__PURE__ */ new Set(["failure", "error"]);
+async function findPreviewUrl(input3) {
+  const sleep = input3.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const now = input3.now ?? Date.now;
+  const deadline = now() + input3.timeoutSeconds * 1e3;
+  const wanted = input3.environment?.trim().toLowerCase();
+  let seen = "no deployment of this commit yet";
+  for (; ; ) {
+    const deployments = await input3.github(
+      `/repos/${input3.repo}/deployments?sha=${input3.sha}&per_page=30`
+    );
+    const matching = deployments.filter(
+      (d) => wanted ? d.environment.toLowerCase() === wanted : /^preview\b/i.test(d.environment)
+    );
+    const environments = [...new Set(matching.map((d) => d.environment))];
+    if (environments.length > 1) {
+      throw new Error(
+        `This commit has preview deployments in ${environments.length} environments (${environments.join(", ")}). Set \`preview-environment\` to the one reviewers should open.`
+      );
+    }
+    const deployment = matching[0];
+    if (deployment) {
+      const statuses = await input3.github(
+        `/repos/${input3.repo}/deployments/${deployment.id}/statuses?per_page=10`
+      );
+      const latest = statuses[0];
+      if (latest?.state === "success") {
+        const url2 = latest.environment_url || latest.target_url;
+        if (url2) return url2.replace(/\/$/, "");
+      }
+      if (latest && FAILED.has(latest.state)) {
+        throw new Error(`The preview deployment in "${deployment.environment}" failed.`);
+      }
+      seen = `"${deployment.environment}" is ${latest?.state ?? "queued"}`;
+    } else if (deployments.length > 0) {
+      seen = `only found ${[...new Set(deployments.map((d) => d.environment))].join(", ")}`;
+    }
+    if (now() + POLL_MS > deadline) {
+      throw new Error(
+        `No preview deployment was ready after ${input3.timeoutSeconds}s (${seen}). If your host doesn't record GitHub deployments, pass \`preview-url\`.`
+      );
+    }
+    await sleep(POLL_MS);
+  }
+}
+function previewHost(url2) {
+  let parsed;
+  try {
+    parsed = new URL(url2);
+  } catch {
+    throw new Error(`The preview URL "${url2}" isn't a URL.`);
+  }
+  if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
+    throw new Error(`The preview URL must be https (got ${parsed.protocol}//).`);
+  }
+  return parsed.host;
+}
+async function probePreview(url2, doFetch = fetch) {
+  let response;
+  try {
+    response = await doFetch(`${url2.replace(/\/$/, "")}${WEB_LAUNCH_PATH}`, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(15e3)
+    });
+  } catch {
+    return { access: "unknown", launch: "unknown" };
+  }
+  if (response.status === 401) return { access: "login", launch: "unknown" };
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get("location") ?? "";
+    let elsewhere = false;
+    try {
+      elsewhere = new URL(location, url2).host !== new URL(url2).host;
+    } catch {
+      elsewhere = false;
+    }
+    return { access: elsewhere ? "login" : "open", launch: elsewhere ? "unknown" : "missing" };
+  }
+  if (response.status === 400) return { access: "open", launch: "ready" };
+  if (response.status === 404) return { access: "open", launch: "missing" };
+  return { access: "open", launch: "unknown" };
+}
+function probeWarning(probe) {
+  if (probe.access === "login") {
+    return "This preview asks visitors to sign in (Vercel Deployment Protection). Reviewers need access to the Vercel team, or a Shareable Link, before the Tapthrough link will open.";
+  }
+  if (probe.launch === "missing") {
+    return "The preview has no Tapthrough launch route. Add `@tapthrough/next`'s `createLaunchRoute` at `app/api/tapthrough/launch/route.ts`; until then the link opens the preview without test data.";
+  }
+  return null;
+}
+
 // src/index.ts
 function input2(name) {
   return (process.env[`INPUT_${name.toUpperCase()}`] ?? "").trim();
@@ -20295,11 +20439,10 @@ function traceAffected(root, appRoot, routes, layouts, changedFiles) {
     reach: routeReach({ routes, layouts, changedFiles, sources, aliases })
   };
 }
-var LAYOUT = /(^|\/)(_layout|\+native-intent)\.[cm]?[jt]sx?$/;
-function buildManifest(workingDir, baseSha, headSha) {
+function buildManifest(workingDir, framework, baseSha, headSha) {
   const root = run("git", ["rev-parse", "--show-toplevel"], workingDir).trim();
-  const relative = path2.relative(root, workingDir);
-  const appDir = ["src/app", "app"].map((dir) => path2.join(relative, dir)).find((dir) => existsSync(path2.join(root, dir)));
+  const relative = path2.relative(root, workingDir).split(path2.sep).join("/");
+  const appDir = ["src/app", "app"].map((dir) => relative ? `${relative}/${dir}` : dir).find((dir) => existsSync(path2.join(root, dir)));
   let changedFiles = [];
   let diff = "";
   try {
@@ -20310,13 +20453,13 @@ function buildManifest(workingDir, baseSha, headSha) {
       "::warning::Could not diff against the base branch. Check out with `fetch-depth: 0`."
     );
   }
-  const files = appDir ? run("git", ["ls-files", appDir], root).split("\n").filter(Boolean) : [];
-  const routes = appDir ? routesFromFiles(appDir, files) : [];
-  const layouts = files.filter((file2) => LAYOUT.test(file2));
+  const files = appDir ? run("git", ["ls-files", "--", relative || "."], root).split("\n").filter(Boolean) : [];
+  const routes = appDir ? frameworkRoutes(framework, appDir, files) : [];
+  const layouts = appDir ? shellFiles(framework, relative, appDir, files) : [];
   return {
     manifest: {
       apiVersion: 1,
-      framework: "expo-router",
+      framework,
       routes,
       changedFiles,
       ...traceAffected(root, relative, routes, layouts, changedFiles),
@@ -20325,22 +20468,134 @@ function buildManifest(workingDir, baseSha, headSha) {
     diff
   };
 }
+function pullRequestEvent() {
+  const event = JSON.parse(readFileSync(requiredEnv("GITHUB_EVENT_PATH"), "utf8"));
+  if (!event.pull_request) throw new Error("Tapthrough runs on pull_request events.");
+  const { number: number4, head, base } = event.pull_request;
+  return { pr: number4, head: head.sha, base: base.sha, repo: requiredEnv("GITHUB_REPOSITORY") };
+}
+async function reportRun(apiUrl, token, report) {
+  const response = await fetch(`${apiUrl}/api/v1/runs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(report)
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      `Tapthrough rejected the ${report.platform} run (${response.status}): ${body.error?.message ?? "no details"}`
+    );
+  }
+  return body.links ?? [];
+}
+function publishLinks(links) {
+  const list = [...links].map(([key, url2]) => `- ${key || "This PR"}: ${url2}`).join("\n");
+  console.log(`Preview links:
+${list}`);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Tapthrough
+
+${list}
+`);
+  }
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `links=${JSON.stringify(Object.fromEntries(links))}
+`
+    );
+  }
+}
+function resolvePlatform(workingDir) {
+  const asked = input2("platform") || "auto";
+  if (asked === "expo" || asked === "web") return asked;
+  if (asked !== "auto") throw new Error("`platform` must be `auto`, `expo` or `web`.");
+  let packageJson = null;
+  try {
+    packageJson = readFileSync(path2.join(workingDir, "package.json"), "utf8");
+  } catch {
+    packageJson = null;
+  }
+  return detectFramework(packageJson) === "next-app" ? "web" : "expo";
+}
+async function mainWeb(workingDir, apiUrl) {
+  const appId = input2("app-id");
+  if (!appId) {
+    throw new Error(
+      "Set `app-id` to the ID your launch route and seed hook use, e.g. your production hostname."
+    );
+  }
+  const { pr, head, base, repo } = pullRequestEvent();
+  const { manifest, diff } = buildManifest(workingDir, "next-app", base, head);
+  console.log(
+    `Found ${manifest.routes.length} routes; ${manifest.affected.length} changed directly.`
+  );
+  let url2 = input2("preview-url").replace(/\/$/, "");
+  if (!url2) {
+    const githubToken = input2("github-token") || process.env.GITHUB_TOKEN;
+    if (!githubToken) {
+      throw new Error(
+        "Pass `github-token` (or `preview-url`) so the preview deployment can be found."
+      );
+    }
+    const api = process.env.GITHUB_API_URL || "https://api.github.com";
+    console.log("Waiting for the preview deployment of this commit\u2026");
+    url2 = await findPreviewUrl({
+      repo,
+      sha: head,
+      environment: input2("preview-environment") || void 0,
+      timeoutSeconds: Number(input2("preview-timeout")) || 600,
+      github: async (apiPath) => {
+        const response = await fetch(`${api}${apiPath}`, {
+          headers: {
+            Accept: "application/vnd.github+json",
+            Authorization: `Bearer ${githubToken}`,
+            "X-GitHub-Api-Version": "2022-11-28"
+          }
+        });
+        if (!response.ok) {
+          throw new Error(
+            `GitHub refused to list deployments (${response.status}). Add \`permissions: deployments: read\` to the workflow job.`
+          );
+        }
+        return response.json();
+      }
+    });
+  }
+  const host = previewHost(url2);
+  const probe = await probePreview(url2);
+  const warning = probeWarning(probe);
+  if (warning) console.log(`::warning::${warning}`);
+  const token = await oidcToken(apiUrl);
+  const links = await reportRun(apiUrl, token, {
+    apiVersion: 1,
+    repo,
+    pr,
+    sha: head,
+    platform: "web",
+    runtimeVersion: "web",
+    updateGroupId: host,
+    manifest,
+    diff,
+    web: { appId, url: url2, ...probe }
+  });
+  console.log("Reported web.");
+  publishLinks(new Map(links.map((link) => [link.key, link.url])));
+}
 async function main() {
   const workingDir = path2.resolve(input2("working-directory") || ".");
   const apiUrl = (input2("api-url") || "https://tapthrough-cloud.vercel.app").replace(/\/$/, "");
+  if (resolvePlatform(workingDir) === "web") return mainWeb(workingDir, apiUrl);
   const updateJson = input2("update-json");
   if (!updateJson) throw new Error("Set `update-json` to the file `eas update --json` wrote.");
   const updates = parseEasUpdateJson(readFileSync(path2.resolve(workingDir, updateJson), "utf8"));
-  const event = JSON.parse(readFileSync(requiredEnv("GITHUB_EVENT_PATH"), "utf8"));
-  if (!event.pull_request) throw new Error("Tapthrough runs on pull_request events.");
-  const { number: pr, head, base } = event.pull_request;
-  const repo = requiredEnv("GITHUB_REPOSITORY");
+  const { pr, head, base, repo } = pullRequestEvent();
   const expo = expoInfoFromConfig(
     JSON.parse(
       run("npx", ["--no-install", "expo", "config", "--type", "public", "--json"], workingDir)
     )
   );
-  const { manifest, diff } = buildManifest(workingDir, base.sha, head.sha);
+  const { manifest, diff } = buildManifest(workingDir, "expo-router", base, head);
   console.log(
     `Found ${manifest.routes.length} routes; ${manifest.affected.length} changed directly.`
   );
@@ -20368,11 +20623,11 @@ async function main() {
     }[nativeBuild.state];
     console.log(`${update.platform}: ${said}`);
     if (nativeBuild.state === "failed") console.log(`::warning::${update.platform}: ${said}`);
-    const report = {
+    const reported = await reportRun(apiUrl, token, {
       apiVersion: 1,
       repo,
       pr,
-      sha: head.sha,
+      sha: head,
       platform: update.platform,
       runtimeVersion: update.runtimeVersion,
       updateGroupId: update.updateGroupId,
@@ -20380,37 +20635,11 @@ async function main() {
       diff,
       expo,
       nativeBuild
-    };
-    const response = await fetch(`${apiUrl}/api/v1/runs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify(report)
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        `Tapthrough rejected the ${update.platform} run (${response.status}): ${body.error?.message ?? "no details"}`
-      );
-    }
-    for (const link of body.links ?? []) links.set(link.key, link.url);
+    for (const link of reported) links.set(link.key, link.url);
     console.log(`Reported ${update.platform}.`);
   }
-  const list = [...links].map(([key, url2]) => `- ${key || "This PR"}: ${url2}`).join("\n");
-  console.log(`Preview links:
-${list}`);
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Tapthrough
-
-${list}
-`);
-  }
-  if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `links=${JSON.stringify(Object.fromEntries(links))}
-`
-    );
-  }
+  publishLinks(links);
 }
 main().catch((error62) => {
   console.log(`::error::${error62 instanceof Error ? error62.message : String(error62)}`);

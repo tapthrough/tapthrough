@@ -9,6 +9,8 @@ function accessToken() {
   return `${part({ alg: 'HS256', typ: 'JWT' })}.${part({ sub: 'user-1', exp })}.sig`
 }
 
+const request = new Request('https://acme-git-fix.vercel.app/api/tapthrough/launch')
+
 afterEach(() => vi.restoreAllMocks())
 
 describe('supabaseSsrAuth', () => {
@@ -18,7 +20,7 @@ describe('supabaseSsrAuth', () => {
     )
     const jar = createCookieJar('theme=dark')
     const auth = supabaseSsrAuth({ url: 'https://abc.supabase.co', anonKey: 'anon' })
-    await auth.signIn({ access_token: accessToken(), refresh_token: 'rt' }, jar)
+    await auth.signIn({ access_token: accessToken(), refresh_token: 'rt' }, jar, request)
 
     const names = jar.headers().map((header) => header.split('=')[0])
     expect(names.some((name) => name?.startsWith('sb-abc-auth-token'))).toBe(true)
@@ -27,8 +29,8 @@ describe('supabaseSsrAuth', () => {
 
   it('refuses a session without both tokens', async () => {
     const auth = supabaseSsrAuth({ url: 'https://abc.supabase.co', anonKey: 'anon' })
-    await expect(auth.signIn({ access_token: 'only' }, createCookieJar(null))).rejects.toThrow(
-      'missing access_token or refresh_token',
-    )
+    await expect(
+      auth.signIn({ access_token: 'only' }, createCookieJar(null), request),
+    ).rejects.toThrow('missing access_token or refresh_token')
   })
 })

@@ -6,14 +6,39 @@ branding:
   color: blue
 
 inputs:
+  platform:
+    description: >-
+      `expo` for an Expo app, `web` for a Next.js app on preview deployments, or `auto` to
+      read it from the app's package.json.
+    default: auto
   update-json:
-    description: File written by `eas update --json --non-interactive`, relative to working-directory
-    required: true
+    description: >-
+      Expo only, required. File written by `eas update --json --non-interactive`, relative
+      to working-directory.
+  app-id:
+    description: >-
+      Web only, required. The app ID your launch route and seed hook use, e.g. your
+      production hostname.
+  preview-url:
+    description: >-
+      Web only. This PR's preview deployment. Left out, the Action waits for the GitHub
+      deployment your host records for this commit (Vercel does), which needs
+      `permissions: deployments: read`.
+  preview-environment:
+    description: >-
+      Web only. The GitHub deployment environment to wait for, e.g. `Preview – acme-web`,
+      when a commit deploys to more than one.
+  preview-timeout:
+    description: Web only. Seconds to wait for the preview deployment.
+    default: "600"
+  github-token:
+    description: Web only. Lists this commit's deployments.
+    default: ${{ github.token }}
   api-url:
     description: Tapthrough's base URL; also the audience of the GitHub OIDC token
     default: https://tapthrough-cloud.vercel.app
   working-directory:
-    description: The Expo app's directory
+    description: The app's directory
     default: .
   native-build-profile:
     description: >-

@@ -21,6 +21,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./authjs": {
+      "types": "./dist/authjs.d.ts",
+      "default": "./dist/authjs.js"
+    },
     "./supabase": {
       "types": "./dist/supabase.d.ts",
       "default": "./dist/supabase.js"
