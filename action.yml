@@ -19,6 +19,12 @@ inputs:
     description: >-
       Web only, required. The app ID your launch route and seed hook use, e.g. your
       production hostname.
+  test-data:
+    description: >-
+      Web only. `off` when the preview's database must not get test users: links open the
+      page and reviewers sign in with their own accounts. No launch route or seed hook is
+      needed.
+    default: "on"
   preview-url:
     description: >-
       Web only. This PR's preview deployment. Left out, the Action waits for the GitHub

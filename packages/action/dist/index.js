@@ -20351,7 +20351,11 @@ function previewHost(url2) {
   }
   return parsed.host;
 }
-async function probePreview(url2, doFetch = fetch) {
+async function probePreview(url2, doFetch = fetch, testData = "on") {
+  const probe = await probeLaunchRoute(url2, doFetch);
+  return testData === "off" ? { access: probe.access, launch: "off" } : probe;
+}
+async function probeLaunchRoute(url2, doFetch) {
   let response;
   try {
     response = await doFetch(`${url2.replace(/\/$/, "")}${WEB_LAUNCH_PATH}`, {
@@ -20563,7 +20567,9 @@ async function mainWeb(workingDir, apiUrl) {
     });
   }
   const host = previewHost(url2);
-  const probe = await probePreview(url2);
+  const testData = input2("test-data") || "on";
+  if (testData !== "on" && testData !== "off") throw new Error("`test-data` must be `on` or `off`.");
+  const probe = await probePreview(url2, fetch, testData);
   const warning = probeWarning(probe);
   if (warning) console.log(`::warning::${warning}`);
   const token = await oidcToken(apiUrl);
