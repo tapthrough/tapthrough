@@ -160,6 +160,18 @@ describe('createSeedHandler', () => {
     expect(body.error.code).toBe('invalid')
   })
 
+  it("says Tapthrough couldn't be reached when the keys can't be fetched", async () => {
+    const offline = async () => {
+      throw new TypeError('fetch failed')
+    }
+    const { status, body } = await post(handler({ keys: offline }), { token: await mint() })
+    expect(status).toBe(502)
+    expect(body.error).toEqual({
+      code: 'keys_unavailable',
+      message: "Couldn't reach Tapthrough to check this link. Try again in a moment.",
+    })
+  })
+
   it('passes a reused-token error from Tapthrough through to the app', async () => {
     const fetch = api(
       { error: { code: 'token_used', message: 'This link was already opened.' } },

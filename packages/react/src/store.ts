@@ -2,6 +2,7 @@ import {
   type Checklist,
   type ChecklistStep,
   checklistProgress,
+  type Diagnostics,
   failedStepBody,
   fetchChecklist,
   type PreviewContext,
@@ -10,9 +11,12 @@ import {
   requestLaunch,
   resultsFrom,
   sendFeedback,
+  sendRecheck,
   sendStepResult,
   stepId,
 } from '@tapthrough/core'
+import type { BrowserInfo } from './browser.js'
+import type { Screenshot } from './image.js'
 
 export interface ReviewConfig {
   /** Tapthrough's base URL. */
@@ -26,7 +30,14 @@ export interface ReviewConfig {
   fetch?: typeof fetch
   /** The page the reviewer is on; defaults to `location.pathname`. */
   currentPath?: () => string | undefined
+  /** The browser and operating system, sent with reports. */
+  device?: () => Partial<BrowserInfo>
+  /** Recent pages, console errors and failed requests, sent with reports. */
+  diagnostics?: () => Diagnostics
 }
+
+/** A reviewer's verdict on a report from an earlier commit. */
+export type RecheckResult = 'fixed' | 'still_broken'
 
 export interface ReviewState {
   /** `none`: this deployment isn't a Tapthrough PR build, so there's nothing to show. */
@@ -35,7 +46,9 @@ export interface ReviewState {
   /** Results by `scenario:index`, including ones recorded this session. */
   results: Results
   progress: Progress
-  /** Step IDs (and `report`, `setup:<key>`) with a request in flight. */
+  /** Earlier reports checked again this session, by finding ID. */
+  rechecked: Readonly<Record<string, RecheckResult>>
+  /** IDs with a request in flight: a step ID, `report`, `setup:<key>` or `recheck:<id>`. */
   busy: ReadonlySet<string>
   /** The last thing that went wrong, said for a reviewer. */
   error: string | null
@@ -44,6 +57,12 @@ export interface ReviewState {
 }
 
 const EMPTY_PROGRESS: Progress = { total: 0, passed: 0, failed: 0 }
+
+/** What a report can carry besides its words. */
+export interface ReportExtras {
+  name?: string | undefined
+  screenshot?: Screenshot | null | undefined
+}
 
 /**
  * The Review panel's state and actions, with no React or DOM in it. Results
@@ -62,6 +81,7 @@ export function createReviewStore(config: ReviewConfig) {
     checklist: null,
     results: {},
     progress: EMPTY_PROGRESS,
+    rechecked: {},
     busy: new Set(),
     error: null,
     lastReportUrl: null,
@@ -85,6 +105,23 @@ export function createReviewStore(config: ReviewConfig) {
   const route = () =>
     config.currentPath?.() ??
     (globalThis as { location?: { pathname?: string } }).location?.pathname
+
+  /** What every report says about where and how it was sent. */
+  function context(extras: ReportExtras) {
+    const path = route()
+    const device = config.device?.()
+    const diagnostics = config.diagnostics?.()
+    return {
+      preview,
+      platform: 'web' as const,
+      ...(extras.name ? { reporterName: extras.name } : {}),
+      ...(path ? { route: path } : {}),
+      ...(config.scenarioId ? { scenarioId: config.scenarioId } : {}),
+      ...(device && Object.keys(device).length > 0 ? { device } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
+      ...(extras.screenshot ? { screenshot: extras.screenshot } : {}),
+    }
+  }
 
   return {
     getState: () => state,
@@ -133,19 +170,15 @@ export function createReviewStore(config: ReviewConfig) {
     },
 
     /** Fails a step: posts a report on the PR with the reviewer's note, then records the failure. */
-    async fail(scenarioKey: string, step: ChecklistStep, note: string, name?: string) {
+    async fail(scenarioKey: string, step: ChecklistStep, note: string, extras: ReportExtras = {}) {
       const id = stepId(scenarioKey, step.index)
       const before = state.results[id]
       set({ results: { ...state.results, [id]: 'fail' }, error: null })
       busy(id, true)
       const report = await sendFeedback(
         {
-          preview,
-          platform: 'web',
+          ...context(extras),
           body: failedStepBody(step, note),
-          ...(name ? { reporterName: name } : {}),
-          ...(route() ? { route: route() as string } : {}),
-          ...(config.scenarioId ? { scenarioId: config.scenarioId } : {}),
           // The reviewer said this step of the PR's own plan failed.
           cause: 'pr',
         },
@@ -163,7 +196,7 @@ export function createReviewStore(config: ReviewConfig) {
           scenarioKey,
           stepIndex: step.index,
           result: 'fail',
-          ...(name ? { reporterName: name } : {}),
+          ...(extras.name ? { reporterName: extras.name } : {}),
           ...(report.findingId ? { findingId: report.findingId } : {}),
         },
         options,
@@ -175,27 +208,35 @@ export function createReviewStore(config: ReviewConfig) {
     },
 
     /** Posts a report that isn't about a step. */
-    async report(body: string, name?: string) {
+    async report(body: string, extras: ReportExtras = {}) {
       if (!body.trim()) return false
       busy('report', true)
       set({ error: null })
-      const report = await sendFeedback(
-        {
-          preview,
-          platform: 'web',
-          body: body.trim(),
-          ...(name ? { reporterName: name } : {}),
-          ...(route() ? { route: route() as string } : {}),
-          ...(config.scenarioId ? { scenarioId: config.scenarioId } : {}),
-        },
-        options,
-      )
+      const report = await sendFeedback({ ...context(extras), body: body.trim() }, options)
       busy('report', false)
       if (!report.ok) {
         set({ error: report.message })
         return false
       }
       set({ lastReportUrl: report.commentUrl })
+      return true
+    },
+
+    /** Says whether a report from an earlier commit is fixed on this preview. */
+    async recheck(findingId: string, result: RecheckResult, name?: string) {
+      const id = `recheck:${findingId}`
+      busy(id, true)
+      set({ error: null })
+      const saved = await sendRecheck(
+        { preview, platform: 'web', findingId, result, ...(name ? { reporterName: name } : {}) },
+        options,
+      )
+      busy(id, false)
+      if (!saved.ok) {
+        set({ error: saved.message })
+        return false
+      }
+      set({ rechecked: { ...state.rechecked, [findingId]: result } })
       return true
     },
 
@@ -213,6 +254,11 @@ export function createReviewStore(config: ReviewConfig) {
       return launch.launchUrl
     },
 
+    /** For problems outside the store, e.g. an image that couldn't be attached. */
+    setError(message: string) {
+      set({ error: message })
+    },
+
     dismissError() {
       set({ error: null })
     },
@@ -220,3 +266,12 @@ export function createReviewStore(config: ReviewConfig) {
 }
 
 export type ReviewStore = ReturnType<typeof createReviewStore>
+
+/**
+ * What a scenario's link does in this app, or null when it can't do anything:
+ * without test data, a page that needs a record has nothing to open.
+ */
+export function setUpLabel(checklist: Checklist, routePath: string): 'Set up' | 'Open page' | null {
+  if (checklist.web?.launch !== 'off') return 'Set up'
+  return routePath.includes('[') ? null : 'Open page'
+}

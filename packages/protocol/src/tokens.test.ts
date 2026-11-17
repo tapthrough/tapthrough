@@ -79,4 +79,15 @@ describe('link tokens', () => {
       verifyLinkToken(token, { keys, issuer, appId: input.appId }),
     ).rejects.toMatchObject({ code: 'invalid' })
   })
+
+  it('says the keys were unavailable, not that the token is bad, when they cannot be fetched', async () => {
+    const { key } = await setup()
+    const { token } = await signLinkToken(input, key)
+    const offline = async () => {
+      throw new TypeError('fetch failed')
+    }
+    await expect(
+      verifyLinkToken(token, { keys: offline, issuer: input.issuer, appId: input.appId }),
+    ).rejects.toMatchObject({ code: 'keys_unavailable' })
+  })
 })

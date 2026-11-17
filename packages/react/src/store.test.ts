@@ -1,6 +1,6 @@
 import type { Checklist } from '@tapthrough/core'
 import { describe, expect, it, vi } from 'vitest'
-import { createReviewStore } from './store.js'
+import { createReviewStore, setUpLabel } from './store.js'
 
 const checklist: Checklist = {
   pr: 12,
@@ -124,7 +124,9 @@ describe('createReviewStore', () => {
     await review.load()
     const step = checklist.scenarios[0]?.steps[0]
     if (!step) throw new Error('fixture')
-    expect(await review.fail('settings', step, 'Header kept the old name')).toBe(true)
+    expect(await review.fail('settings', step, 'Header kept the old name', { name: 'Ana' })).toBe(
+      true,
+    )
 
     const [feedback, result] = calls.slice(-2)
     expect(feedback).toMatchObject({
@@ -165,10 +167,85 @@ describe('createReviewStore', () => {
     })
     await review.load()
     expect(await review.report('   ')).toBe(false)
-    expect(await review.report(' The logo is blurry ', 'Ana')).toBe(true)
+    expect(await review.report(' The logo is blurry ', { name: 'Ana' })).toBe(true)
     expect(calls.at(-1)?.body).toMatchObject({ body: 'The logo is blurry', reporterName: 'Ana' })
     expect(calls.at(-1)?.body).not.toHaveProperty('cause')
     expect(review.getState().lastReportUrl).toBe('https://github.test/c/2')
+  })
+
+  it('sends the browser, recent diagnostics and a screenshot with a report', async () => {
+    const stub = api({
+      '/api/v1/checklist': () => ({ json: checklist }),
+      '/api/v1/feedback': () => ({ json: { commentUrl: 'https://github.test/c/3' } }),
+    })
+    const review = createReviewStore({
+      apiUrl: 'https://tapthrough.test',
+      host: 'acme-1.vercel.app',
+      appId: 'app.acme.com',
+      fetch: stub.fetch,
+      currentPath: () => '/pricing',
+      device: () => ({ os: 'Chrome', osVersion: '142', model: 'macOS' }),
+      diagnostics: () => ({
+        screens: [{ path: '/pricing', at: 1 }],
+        logs: [{ level: 'error', message: 'boom', at: 2 }],
+        requests: [],
+      }),
+    })
+    await review.load()
+    const screenshot = { contentType: 'image/jpeg' as const, base64: '/9j/4AAQ' }
+    expect(await review.report('Broken layout', { screenshot })).toBe(true)
+    expect(stub.calls.at(-1)?.body).toMatchObject({
+      device: { os: 'Chrome', osVersion: '142', model: 'macOS' },
+      diagnostics: { logs: [{ level: 'error', message: 'boom' }] },
+      screenshot,
+      route: '/pricing',
+    })
+  })
+
+  it('leaves device out when the browser could not be read', async () => {
+    const stub = api({
+      '/api/v1/checklist': () => ({ json: checklist }),
+      '/api/v1/feedback': () => ({ json: { commentUrl: 'https://github.test/c/4' } }),
+    })
+    const review = createReviewStore({
+      apiUrl: 'https://tapthrough.test',
+      host: 'acme-1.vercel.app',
+      appId: 'app.acme.com',
+      fetch: stub.fetch,
+      device: () => ({}),
+    })
+    await review.load()
+    await review.report('x')
+    expect(stub.calls.at(-1)?.body).not.toHaveProperty('device')
+    expect(stub.calls.at(-1)?.body).not.toHaveProperty('screenshot')
+  })
+
+  it('records a re-check of an earlier report', async () => {
+    const { review, calls } = store({
+      '/api/v1/findings/f_9/check': () => ({ json: {} }),
+      '/api/v1/findings/f_bad/check': () => ({
+        status: 404,
+        json: { error: { message: 'No such report' } },
+      }),
+    })
+    await review.load()
+    expect(await review.recheck('f_9', 'fixed', 'Ana')).toBe(true)
+    expect(calls.at(-1)).toMatchObject({
+      path: '/api/v1/findings/f_9/check',
+      body: { result: 'fixed', platform: 'web', reporterName: 'Ana' },
+    })
+    expect(review.getState().rechecked).toEqual({ f_9: 'fixed' })
+    expect(await review.recheck('f_bad', 'still_broken')).toBe(false)
+    expect(review.getState().error).toBe('No such report')
+    expect(review.getState().rechecked).toEqual({ f_9: 'fixed' })
+  })
+
+  it('offers Set up with test data, Open page without it, and nothing for a page that needs a record', () => {
+    const off = { ...checklist, web: { access: 'open' as const, launch: 'off' as const } }
+    expect(setUpLabel(checklist, '/[orgSlug]/settings')).toBe('Set up')
+    expect(setUpLabel({ ...checklist, web: null }, '/pricing')).toBe('Set up')
+    expect(setUpLabel(off, '/pricing')).toBe('Open page')
+    expect(setUpLabel(off, '/[orgSlug]/settings')).toBeNull()
   })
 
   it('asks for a launch link to set a scenario up', async () => {

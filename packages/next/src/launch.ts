@@ -72,6 +72,10 @@ const STATUS: Record<string, number> = {
   network: 502,
   seed_hook_failed: 502,
   bad_response: 502,
+  keys_unavailable: 502,
+  // The link itself is the problem; opening it again from the PR fixes it.
+  expired: 410,
+  token_used: 410,
 }
 
 /**

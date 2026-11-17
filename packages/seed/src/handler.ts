@@ -145,6 +145,13 @@ async function verify(
     return await verifyLinkToken(token, options)
   } catch (error) {
     if (error instanceof LinkTokenError) {
+      if (error.code === 'keys_unavailable') {
+        throw new SeedError(
+          error.code,
+          "Couldn't reach Tapthrough to check this link. Try again in a moment.",
+          502,
+        )
+      }
       const message =
         error.code === 'expired' ? 'This link has expired. Reopen it from the PR.' : error.message
       throw new SeedError(error.code, message, 401)
