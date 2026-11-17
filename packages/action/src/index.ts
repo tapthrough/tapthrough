@@ -4,13 +4,21 @@ import path from 'node:path'
 import {
   affectedRoutesByImports,
   aliasesFromTsconfig,
+  detectFramework,
+  frameworkRoutes,
   routeReach,
-  routesFromFiles,
+  shellFiles,
 } from '@tapthrough/cli'
-import { MAX_DIFF_LENGTH, type Manifest, type RunReport } from '@tapthrough/protocol'
+import {
+  type Framework,
+  MAX_DIFF_LENGTH,
+  type Manifest,
+  type RunReport,
+} from '@tapthrough/protocol'
 import { parseEasUpdateJson } from './eas.js'
 import { type ExpoInfo, expoInfoFromConfig } from './expo-config.js'
 import { ensureNativeBuild, parseProfiles } from './native.js'
+import { findPreviewUrl, previewHost, probePreview, probeWarning, type WebInfo } from './web.js'
 
 function input(name: string): string {
   return (process.env[`INPUT_${name.toUpperCase()}`] ?? '').trim()
@@ -82,18 +90,16 @@ function traceAffected(
   }
 }
 
-/** Files that wrap every screen below them: layouts, and the deep-link handler. */
-const LAYOUT = /(^|\/)(_layout|\+native-intent)\.[cm]?[jt]sx?$/
-
 function buildManifest(
   workingDir: string,
+  framework: Framework,
   baseSha: string,
   headSha: string,
 ): { manifest: Manifest; diff: string } {
   const root = run('git', ['rev-parse', '--show-toplevel'], workingDir).trim()
-  const relative = path.relative(root, workingDir)
+  const relative = path.relative(root, workingDir).split(path.sep).join('/')
   const appDir = ['src/app', 'app']
-    .map((dir) => path.join(relative, dir))
+    .map((dir) => (relative ? `${relative}/${dir}` : dir))
     .find((dir) => existsSync(path.join(root, dir)))
 
   let changedFiles: string[] = []
@@ -109,13 +115,18 @@ function buildManifest(
     )
   }
 
-  const files = appDir ? run('git', ['ls-files', appDir], root).split('\n').filter(Boolean) : []
-  const routes = appDir ? routesFromFiles(appDir, files) : []
-  const layouts = files.filter((file) => LAYOUT.test(file))
+  // The whole app, not just its router directory: a Next.js proxy sits beside it.
+  const files = appDir
+    ? run('git', ['ls-files', '--', relative || '.'], root)
+        .split('\n')
+        .filter(Boolean)
+    : []
+  const routes = appDir ? frameworkRoutes(framework, appDir, files) : []
+  const layouts = appDir ? shellFiles(framework, relative, appDir, files) : []
   return {
     manifest: {
       apiVersion: 1,
-      framework: 'expo-router',
+      framework,
       routes,
       changedFiles,
       ...traceAffected(root, relative, routes, layouts, changedFiles),
@@ -125,26 +136,159 @@ function buildManifest(
   }
 }
 
-async function main() {
-  const workingDir = path.resolve(input('working-directory') || '.')
-  const apiUrl = (input('api-url') || 'https://tapthrough-cloud.vercel.app').replace(/\/$/, '')
-  const updateJson = input('update-json')
-  if (!updateJson) throw new Error('Set `update-json` to the file `eas update --json` wrote.')
+interface PullRequestEvent {
+  pr: number
+  head: string
+  base: string
+  repo: string
+}
 
-  const updates = parseEasUpdateJson(readFileSync(path.resolve(workingDir, updateJson), 'utf8'))
+function pullRequestEvent(): PullRequestEvent {
   const event = JSON.parse(readFileSync(requiredEnv('GITHUB_EVENT_PATH'), 'utf8')) as {
     pull_request?: { number: number; head: { sha: string }; base: { sha: string } }
   }
   if (!event.pull_request) throw new Error('Tapthrough runs on pull_request events.')
-  const { number: pr, head, base } = event.pull_request
-  const repo = requiredEnv('GITHUB_REPOSITORY')
+  const { number, head, base } = event.pull_request
+  return { pr: number, head: head.sha, base: base.sha, repo: requiredEnv('GITHUB_REPOSITORY') }
+}
+
+/** Posts one run and returns its preview links. */
+async function reportRun(
+  apiUrl: string,
+  token: string,
+  report: RunReport & { expo?: ExpoInfo; web?: WebInfo },
+): Promise<{ key: string; url: string }[]> {
+  const response = await fetch(`${apiUrl}/api/v1/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(report),
+  })
+  const body = (await response.json().catch(() => ({}))) as {
+    links?: { key: string; url: string }[]
+    error?: { message: string }
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Tapthrough rejected the ${report.platform} run (${response.status}): ${body.error?.message ?? 'no details'}`,
+    )
+  }
+  return body.links ?? []
+}
+
+function publishLinks(links: Map<string, string>) {
+  const list = [...links].map(([key, url]) => `- ${key || 'This PR'}: ${url}`).join('\n')
+  console.log(`Preview links:\n${list}`)
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Tapthrough\n\n${list}\n`)
+  }
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `links=${JSON.stringify(Object.fromEntries(links))}\n`,
+    )
+  }
+}
+
+/** `expo` or `web`, from the `platform` input or the app's package.json. */
+function resolvePlatform(workingDir: string): 'expo' | 'web' {
+  const asked = input('platform') || 'auto'
+  if (asked === 'expo' || asked === 'web') return asked
+  if (asked !== 'auto') throw new Error('`platform` must be `auto`, `expo` or `web`.')
+  let packageJson: string | null = null
+  try {
+    packageJson = readFileSync(path.join(workingDir, 'package.json'), 'utf8')
+  } catch {
+    packageJson = null
+  }
+  return detectFramework(packageJson) === 'next-app' ? 'web' : 'expo'
+}
+
+/** A web app: wait for the host's preview deployment of this commit, then report it. */
+async function mainWeb(workingDir: string, apiUrl: string) {
+  const appId = input('app-id')
+  if (!appId) {
+    throw new Error(
+      'Set `app-id` to the ID your launch route and seed hook use, e.g. your production hostname.',
+    )
+  }
+  const { pr, head, base, repo } = pullRequestEvent()
+  const { manifest, diff } = buildManifest(workingDir, 'next-app', base, head)
+  console.log(
+    `Found ${manifest.routes.length} routes; ${manifest.affected.length} changed directly.`,
+  )
+
+  let url = input('preview-url').replace(/\/$/, '')
+  if (!url) {
+    const githubToken = input('github-token') || process.env.GITHUB_TOKEN
+    if (!githubToken) {
+      throw new Error(
+        'Pass `github-token` (or `preview-url`) so the preview deployment can be found.',
+      )
+    }
+    const api = process.env.GITHUB_API_URL || 'https://api.github.com'
+    console.log('Waiting for the preview deployment of this commit…')
+    url = await findPreviewUrl({
+      repo,
+      sha: head,
+      environment: input('preview-environment') || undefined,
+      timeoutSeconds: Number(input('preview-timeout')) || 600,
+      github: async (apiPath) => {
+        const response = await fetch(`${api}${apiPath}`, {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${githubToken}`,
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+        })
+        if (!response.ok) {
+          throw new Error(
+            `GitHub refused to list deployments (${response.status}). Add \`permissions: deployments: read\` to the workflow job.`,
+          )
+        }
+        return response.json()
+      },
+    })
+  }
+  const host = previewHost(url)
+  const probe = await probePreview(url)
+  const warning = probeWarning(probe)
+  if (warning) console.log(`::warning::${warning}`)
+
+  const token = await oidcToken(apiUrl)
+  const links = await reportRun(apiUrl, token, {
+    apiVersion: 1,
+    repo,
+    pr,
+    sha: head,
+    platform: 'web',
+    runtimeVersion: 'web',
+    updateGroupId: host,
+    manifest,
+    diff,
+    web: { appId, url, ...probe },
+  })
+  // The deployment's host stays out of the log: in public repos, logs are public.
+  console.log('Reported web.')
+  publishLinks(new Map(links.map((link) => [link.key, link.url])))
+}
+
+async function main() {
+  const workingDir = path.resolve(input('working-directory') || '.')
+  const apiUrl = (input('api-url') || 'https://tapthrough-cloud.vercel.app').replace(/\/$/, '')
+  if (resolvePlatform(workingDir) === 'web') return mainWeb(workingDir, apiUrl)
+
+  const updateJson = input('update-json')
+  if (!updateJson) throw new Error('Set `update-json` to the file `eas update --json` wrote.')
+
+  const updates = parseEasUpdateJson(readFileSync(path.resolve(workingDir, updateJson), 'utf8'))
+  const { pr, head, base, repo } = pullRequestEvent()
 
   const expo: ExpoInfo = expoInfoFromConfig(
     JSON.parse(
       run('npx', ['--no-install', 'expo', 'config', '--type', 'public', '--json'], workingDir),
     ),
   )
-  const { manifest, diff } = buildManifest(workingDir, base.sha, head.sha)
+  const { manifest, diff } = buildManifest(workingDir, 'expo-router', base, head)
   console.log(
     `Found ${manifest.routes.length} routes; ${manifest.affected.length} changed directly.`,
   )
@@ -175,11 +319,11 @@ async function main() {
     }[nativeBuild.state]
     console.log(`${update.platform}: ${said}`)
     if (nativeBuild.state === 'failed') console.log(`::warning::${update.platform}: ${said}`)
-    const report: RunReport & { expo: ExpoInfo } = {
+    const reported = await reportRun(apiUrl, token, {
       apiVersion: 1,
       repo,
       pr,
-      sha: head.sha,
+      sha: head,
       platform: update.platform,
       runtimeVersion: update.runtimeVersion,
       updateGroupId: update.updateGroupId,
@@ -187,37 +331,12 @@ async function main() {
       diff,
       expo,
       nativeBuild,
-    }
-    const response = await fetch(`${apiUrl}/api/v1/runs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(report),
     })
-    const body = (await response.json().catch(() => ({}))) as {
-      links?: { key: string; url: string }[]
-      error?: { message: string }
-    }
-    if (!response.ok) {
-      throw new Error(
-        `Tapthrough rejected the ${update.platform} run (${response.status}): ${body.error?.message ?? 'no details'}`,
-      )
-    }
-    for (const link of body.links ?? []) links.set(link.key, link.url)
+    for (const link of reported) links.set(link.key, link.url)
     // Update group IDs stay out of the log: in public repos, logs are public.
     console.log(`Reported ${update.platform}.`)
   }
-
-  const list = [...links].map(([key, url]) => `- ${key || 'This PR'}: ${url}`).join('\n')
-  console.log(`Preview links:\n${list}`)
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Tapthrough\n\n${list}\n`)
-  }
-  if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(
-      process.env.GITHUB_OUTPUT,
-      `links=${JSON.stringify(Object.fromEntries(links))}\n`,
-    )
-  }
+  publishLinks(links)
 }
 
 main().catch((error: unknown) => {
