@@ -1,7 +1,7 @@
 import type { RouteEntry, ScenarioSpec } from '@tapthrough/protocol'
 import { type Aliases, importSpecifiers, resolveImport } from './imports.js'
 
-/** One Expo Router screen and the scenarios that open it. */
+/** One screen and the scenarios that open it. */
 export interface Screen {
   path: string
   file: string
@@ -74,7 +74,7 @@ function pad(text: string, width: number) {
 /** The map as text for a person or a coding agent: what's covered, and what to write next. */
 export function formatMap(map: ScreenMap): string {
   if (!map.appDir) {
-    return 'No Expo Router app found here (looked for src/app and app). Run this in the app directory, or pass --dir.'
+    return 'No Expo Router or Next.js app found here (looked for src/app and app). Run this in the app directory, or pass --dir.'
   }
   const covered = map.screens.filter((screen) => screen.scenarios.length > 0)
   const missing = map.screens.filter((screen) => screen.scenarios.length === 0)

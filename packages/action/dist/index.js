@@ -19728,7 +19728,8 @@ function date4(params) {
 }
 
 // ../protocol/dist/scenario.js
-var Platform = external_exports.enum(["ios", "android"]);
+var Platform = external_exports.enum(["ios", "android", "web"]);
+var NativePlatform = external_exports.enum(["ios", "android"]);
 var TestStep = external_exports.object({
   /** What the reviewer does: "Clear the title and tap Save". */
   action: external_exports.string().min(1),
@@ -19749,7 +19750,7 @@ var Seed = external_exports.object({
   path: ["preset"]
 });
 var Route = external_exports.object({
-  /** Expo Router path, e.g. `/notes/[id]/edit`. */
+  /** File-router path (Expo Router or Next.js), e.g. `/notes/[id]/edit`. */
   path: external_exports.string().startsWith("/"),
   /** Values may reference seed output with `$seed.` paths. */
   params: external_exports.record(external_exports.string(), external_exports.string()).default({})
@@ -19774,7 +19775,7 @@ var Scenario = external_exports.object({
 
 // ../protocol/dist/run.js
 var RouteEntry = external_exports.object({
-  /** Expo Router path, e.g. `/notes/[id]/edit`. Groups like `(tabs)` are removed. */
+  /** File-router path, e.g. `/notes/[id]/edit`. Groups like `(tabs)` are removed. */
   path: external_exports.string().startsWith("/"),
   /** Source file, relative to the repo root. */
   file: external_exports.string().min(1)
@@ -19792,9 +19793,10 @@ var PresetSummary = external_exports.object({
   /** JSON Schema of the preset's input. */
   input: external_exports.record(external_exports.string(), external_exports.unknown())
 });
+var Framework = external_exports.enum(["expo-router", "next-app"]);
 var Manifest = external_exports.object({
   apiVersion: external_exports.literal(1),
-  framework: external_exports.literal("expo-router"),
+  framework: Framework,
   routes: external_exports.array(RouteEntry),
   changedFiles: external_exports.array(external_exports.string()),
   affected: external_exports.array(AffectedRoute),
@@ -19826,7 +19828,13 @@ var RunReport = external_exports.object({
   pr: external_exports.number().int().positive(),
   sha: external_exports.string().regex(/^[0-9a-f]{40}$/),
   platform: Platform,
+  /** The native runtime the update needs; `web` on web, where there is none. */
   runtimeVersion: external_exports.string().min(1),
+  /**
+   * The build's ID, which reports from the running app carry back. On iOS and
+   * Android it's the EAS update group; on web it's the preview deployment's
+   * host, e.g. `acme-git-fix-title-acme.vercel.app`.
+   */
   updateGroupId: external_exports.string().min(1),
   manifest: Manifest,
   diff: external_exports.string().max(MAX_DIFF_LENGTH),
@@ -19958,7 +19966,7 @@ function layoutsAbove(routeFile, layoutFiles) {
   const dir = path.posix.dirname(routeFile);
   return layoutFiles.filter((layout) => {
     const layoutDir = path.posix.dirname(layout);
-    return dir === layoutDir || dir.startsWith(`${layoutDir}/`);
+    return layoutDir === "." || dir === layoutDir || dir.startsWith(`${layoutDir}/`);
   });
 }
 function routeReach(input3) {

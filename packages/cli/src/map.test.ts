@@ -90,6 +90,6 @@ describe('buildMap', () => {
 
   it('explains when there is no Expo Router app', () => {
     const empty = buildMap({ appDir: null, routes: [], sources, aliases, scenarios: [] })
-    expect(formatMap(empty)).toContain('No Expo Router app found')
+    expect(formatMap(empty)).toContain('No Expo Router or Next.js app found')
   })
 })

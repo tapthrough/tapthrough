@@ -25,7 +25,7 @@ Commands:
           ideas. Uses your GitHub login (gh auth token) to check write access
 
 Options:
-  --dir <path>         The Expo app's directory (default: current directory)
+  --dir <path>         The app's directory (default: current directory)
   --platform <p>       ios or android (plan and launch; default: ios)
   --scenario <key>     The scenario to launch
   --server <url>       Tapthrough server for bare link IDs (default: $TAPTHROUGH_URL or ${DEFAULT_SERVER})
@@ -137,7 +137,9 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === 'check') {
     if (!project.appDir) {
-      console.error('No Expo Router app found here (looked for src/app and app). Pass --dir.')
+      console.error(
+        'No Expo Router or Next.js app found here (looked for src/app and app). Pass --dir.',
+      )
       return 1
     }
     const plans = readPlans(project)
