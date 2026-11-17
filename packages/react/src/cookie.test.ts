@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { launchedScenarioId } from './index.js'
+import { launchedScenarioId } from './cookie.js'
 
 describe('launchedScenarioId', () => {
   const state = encodeURIComponent(JSON.stringify({ v: 1, scn: 'scn_1', flags: {} }))
