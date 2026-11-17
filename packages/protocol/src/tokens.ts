@@ -37,7 +37,11 @@ export const LinkTokenClaims = z.object({
 })
 export type LinkTokenClaims = z.infer<typeof LinkTokenClaims>
 
-export type LinkTokenErrorCode = 'expired' | 'wrong_audience' | 'invalid'
+/**
+ * `keys_unavailable`: the signing keys couldn't be fetched, so the token was
+ * never checked. It says nothing about the token; the caller should try again.
+ */
+export type LinkTokenErrorCode = 'expired' | 'wrong_audience' | 'invalid' | 'keys_unavailable'
 
 export class LinkTokenError extends Error {
   constructor(
@@ -114,6 +118,11 @@ export async function verifyLinkToken(
     }
     if (error instanceof errors.JWTClaimValidationFailed && error.claim === 'aud') {
       throw new LinkTokenError('wrong_audience', 'Link token is for a different app')
+    }
+    // Anything jose raises about the token itself is a JOSEError. A timeout, or an
+    // error from the network underneath, means the keys never arrived.
+    if (error instanceof errors.JWKSTimeout || !(error instanceof errors.JOSEError)) {
+      throw new LinkTokenError('keys_unavailable', "Couldn't fetch the keys to check this link")
     }
     throw new LinkTokenError('invalid', 'Link token is invalid')
   }

@@ -1,6 +1,6 @@
 {
   "name": "@tapthrough/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tapthrough's platform-neutral SDK logic: the launch sequence, reports, the review checklist and flags",
   "license": "MIT",
   "repository": {
