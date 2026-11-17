@@ -238,6 +238,15 @@ export interface Checklist {
   pr: number
   sha: string
   open: boolean
+  /**
+   * On web: what the Action found on the preview. `launch: 'off'` means the app
+   * runs without test data, so reviewers sign in themselves and "set up" is
+   * just opening the page. Absent on native builds and from older servers.
+   */
+  web?: {
+    access: 'open' | 'login' | 'unknown'
+    launch: 'ready' | 'missing' | 'unknown' | 'off'
+  } | null
   scenarios: ChecklistScenario[]
   recheck?: RecheckItem[]
   newerBuild?: NewerBuild | null
