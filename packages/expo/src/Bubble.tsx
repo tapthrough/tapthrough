@@ -1,3 +1,12 @@
+import type { Badge } from '@tapthrough/core'
+import {
+  type Bounds,
+  BUBBLE_SIZE,
+  defaultPosition,
+  isTap,
+  type Point,
+  snapToEdge,
+} from '@tapthrough/core'
 import { useEffect, useMemo, useRef } from 'react'
 import {
   ActivityIndicator,
@@ -9,15 +18,6 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native'
-import {
-  type Bounds,
-  BUBBLE_SIZE,
-  defaultPosition,
-  isTap,
-  type Point,
-  snapToEdge,
-} from './core/bubble.js'
-import type { Badge } from './core/feedback.js'
 import { haptics, loadGlass } from './ui/native.js'
 import { Icon } from './ui/parts.js'
 

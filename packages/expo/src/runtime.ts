@@ -1,5 +1,5 @@
+import { createLaunchController } from '@tapthrough/core'
 import Constants from 'expo-constants'
-import { createLaunchController } from './core/controller.js'
 
 /** One controller per app, shared by `<Tapthrough>` and `redirectSystemPath`. */
 export const controller = createLaunchController()

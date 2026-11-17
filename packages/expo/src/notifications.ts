@@ -1,6 +1,6 @@
+import type { NotificationsAdapter } from '@tapthrough/core'
 import * as Notifications from 'expo-notifications'
 import { Platform } from 'react-native'
-import type { NotificationsAdapter } from './core/ideas.js'
 
 /** Taps already handled, so the one that launched the app isn't handled twice. */
 const handled = new Set<string>()

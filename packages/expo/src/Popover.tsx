@@ -1,3 +1,30 @@
+import type {
+  Bounds,
+  Checklist,
+  ChecklistReset,
+  ChecklistScenario,
+  NewerBuild,
+  RecheckItem,
+  SetupLine,
+} from '@tapthrough/core'
+import {
+  type Idea,
+  type IdeaStage,
+  nextOpenScenario,
+  type OpenPr,
+  type Placement,
+  prsToReview,
+  type Report,
+  type Results,
+  resetMessage,
+  type ScenarioProgress,
+  type SetupProgress,
+  scenarioProgress,
+  screenPosition,
+  setupLineStates,
+  stepId,
+  stepTime,
+} from '@tapthrough/core'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
@@ -11,35 +38,6 @@ import {
   View,
   type ViewStyle,
 } from 'react-native'
-import type { Bounds } from './core/bubble.js'
-import type {
-  Checklist,
-  ChecklistReset,
-  ChecklistScenario,
-  NewerBuild,
-  RecheckItem,
-  SetupLine,
-} from './core/feedback.js'
-import { resetMessage } from './core/feedback.js'
-import {
-  type Idea,
-  type IdeaStage,
-  type OpenPr,
-  prsToReview,
-  type Report,
-  stepTime,
-} from './core/ideas.js'
-import {
-  nextOpenScenario,
-  type Placement,
-  type Results,
-  type ScenarioProgress,
-  type SetupProgress,
-  scenarioProgress,
-  screenPosition,
-  setupLineStates,
-  stepId,
-} from './core/review.js'
 import { useBackPress } from './Overlay.js'
 import { useReduceMotion } from './ui/native.js'
 import { Capsule, CircleButton, Icon, type IconName, Surface } from './ui/parts.js'

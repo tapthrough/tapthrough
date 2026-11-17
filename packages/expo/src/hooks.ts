@@ -1,6 +1,6 @@
+import type { LaunchState } from '@tapthrough/core'
+import { getFlagOverride, subscribeToFlagOverrides } from '@tapthrough/core'
 import { useCallback, useSyncExternalStore } from 'react'
-import type { LaunchState } from './core/controller.js'
-import { getFlagOverride, subscribeToFlagOverrides } from './core/flags.js'
 import { controller } from './runtime.js'
 
 /** The scenario's value for a flag, or undefined when the scenario doesn't set it. */

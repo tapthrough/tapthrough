@@ -1,4 +1,4 @@
-import type { AuthAdapter } from './core/launch.js'
+import type { AuthAdapter } from '@tapthrough/core'
 
 interface SupabaseAuthClient {
   auth: {
