@@ -122,19 +122,32 @@ Push a branch and open a PR. Within a minute or two of Vercel finishing, the PR 
 with an **Open preview** link. The link opens a page that sends the reviewer to the preview. On the
 preview, the **Review** button opens the panel.
 
-Without scenarios, the panel has a form for reporting an issue on the PR and an empty test plan. The next
-step fills it.
+Without scenarios, the panel says there is nothing to check and offers **Report Issue** and
+**Approve PR**. The next step gives it a test plan.
 
 ### What reviewers can do in the panel
 
-- **Pass or fail each step.** Results show on the PR comment's checklist, with who checked them.
-- **Report an issue,** from a failed step or on its own. It becomes a comment on the PR.
+The panel works the same way as the one in the phone app. It lists what to check on the PR, shows one
+main button for the next thing to do, and walks through one step at a time.
+
+- **Start where they are.** Opened on a page the PR has a scenario for, the panel goes straight to that
+  scenario. Otherwise it opens on the list.
+- **Read the brief.** Each scenario says why it is in the plan and what will be checked, then **Start**.
+  If the reviewer is on another page, **Open Page and Start** takes them there and the panel comes back
+  on the first step.
+- **Pass or fail each step,** one at a time. Results show on the PR comment's checklist, with who
+  checked them.
+- **Report an issue,** from a failed step or with **Report Issue**. It becomes a comment on the PR.
 - **Attach a screenshot:** capture the tab, pick an image, or paste one into the note. The panel hides
   itself while the tab is captured.
-- **Check earlier reports again.** After a new push, reports from earlier commits are listed with
-  **Fixed** and **Still broken**.
+- **Check earlier reports again.** After a new push, reports from earlier commits come first, with
+  **Fixed** and **Still Broken**.
+- **Approve the PR.** Once everything passed, **Approve PR** adds the `tapthrough:approved` label and a
+  comment saying who tested it. Then the panel lists the repo's other open PRs waiting for a review.
 - **Move to a newer push.** If the PR has a later commit than the preview they're on, the panel links to
   its preview.
+
+While it is open on a window 900px or wider, the panel sits beside the page instead of covering it.
 
 ### What a report includes
 

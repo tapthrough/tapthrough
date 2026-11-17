@@ -268,4 +268,89 @@ describe('createReviewStore', () => {
     await review.load()
     expect(review.getState().results['settings:0']).toBe('pass')
   })
+
+  it('approves the PR as this build, and says what approving did', async () => {
+    const { review, calls } = store({
+      '/api/v1/pulls/approve': () => ({ json: { pr: 12, result: 'auto_merge' } }),
+    })
+    await review.load()
+    expect(await review.approve('Ana')).toBe(true)
+    expect(calls.at(-1)).toEqual({
+      path: '/api/v1/pulls/approve',
+      body: {
+        apiVersion: 1,
+        updateGroupId: 'acme-1.vercel.app',
+        projectId: 'app.acme.com',
+        platform: 'web',
+        by: 'Ana',
+      },
+    })
+    expect(review.getState()).toMatchObject({
+      approved: true,
+      approveNote: 'Approved. It merges once its checks pass.',
+      error: null,
+    })
+  })
+
+  it('says why when the PR could not be approved', async () => {
+    const { review } = store({
+      '/api/v1/pulls/approve': () => ({
+        status: 409,
+        json: { error: { message: 'PR #12 is already closed' } },
+      }),
+    })
+    await review.load()
+    expect(await review.approve()).toBe(false)
+    expect(review.getState()).toMatchObject({ approved: false, error: 'PR #12 is already closed' })
+  })
+
+  it("reads the repo's open PRs and whether this one is already approved", async () => {
+    const pull = {
+      author: null,
+      draft: false,
+      needsNewBuild: false,
+      fromIdea: false,
+      updatedAt: '',
+    }
+    const { review, calls } = store({
+      '/api/v1/pulls': () => ({
+        json: {
+          pulls: [
+            {
+              ...pull,
+              number: 12,
+              title: 'This one',
+              current: true,
+              openUrl: null,
+              approved: true,
+            },
+            {
+              ...pull,
+              number: 14,
+              title: 'Another',
+              current: false,
+              openUrl: 'https://acme-3.vercel.app',
+            },
+          ],
+        },
+      }),
+    })
+    await review.loadPulls()
+    expect(calls.at(-1)?.body).toEqual({
+      updateGroupId: 'acme-1.vercel.app',
+      projectId: 'app.acme.com',
+      platform: 'web',
+    })
+    expect(review.getState().approved).toBe(true)
+    expect(review.getState().pulls).toHaveLength(2)
+  })
+
+  it("keeps what it has when the open PRs can't be read", async () => {
+    const { review } = store({
+      '/api/v1/pulls/approve': () => ({ json: { pr: 12, result: 'review' } }),
+    })
+    await review.approve()
+    await review.loadPulls()
+    expect(review.getState()).toMatchObject({ approved: true, pulls: null })
+  })
 })
