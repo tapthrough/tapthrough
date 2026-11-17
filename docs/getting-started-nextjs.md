@@ -125,6 +125,29 @@ preview, the **Review** button opens the panel.
 Without scenarios, the panel has a form for reporting an issue on the PR and an empty test plan. The next
 step fills it.
 
+### What reviewers can do in the panel
+
+- **Pass or fail each step.** Results show on the PR comment's checklist, with who checked them.
+- **Report an issue,** from a failed step or on its own. It becomes a comment on the PR.
+- **Attach a screenshot:** capture the tab, pick an image, or paste one into the note. The panel hides
+  itself while the tab is captured.
+- **Check earlier reports again.** After a new push, reports from earlier commits are listed with
+  **Fixed** and **Still broken**.
+- **Move to a newer push.** If the PR has a later commit than the preview they're on, the panel links to
+  its preview.
+
+### What a report includes
+
+Besides the reviewer's words and screenshot, a report carries what helps someone reproduce it:
+
+- the page's path, the browser and the operating system
+- the pages visited since the panel loaded (paths only, without query strings)
+- up to 20 console errors and warnings, with tokens and credentials removed
+- up to 10 failed requests: method, path and status. Never bodies, headers or query strings.
+
+This is recorded only in preview deployments, only in the reviewer's browser, and sent only when they
+send a report.
+
 ## 5. Add scenarios
 
 A scenario is a page and the steps to check on it. Put one JSON file per scenario in

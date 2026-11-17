@@ -10,6 +10,8 @@ export const STYLES = `
   font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color: #f5f5f5;
   -webkit-font-smoothing: antialiased;
+  /* Reviewers paste URLs and IDs; a long one must wrap, not widen the panel. */
+  overflow-wrap: anywhere;
 }
 button, textarea, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -47,7 +49,7 @@ button:disabled { cursor: default; opacity: .55; }
 .grow { flex: 1; min-width: 0; }
 .icon { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: #d4d4d4; font-size: 20px; line-height: 1; }
 .icon:hover { background: #2a2a2a; }
-.body { flex: 1; overflow-y: auto; padding: 8px 16px 16px; }
+.body { flex: 1; overflow-x: hidden; overflow-y: auto; padding: 8px 16px 16px; }
 
 .note { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: #26303f; color: #dbe7ff; font-size: 13px; }
 .note.error { background: #40211f; color: #ffd9d5; display: flex; gap: 8px; align-items: flex-start; }
@@ -64,7 +66,7 @@ button:disabled { cursor: default; opacity: .55; }
 .shot { display: flex; align-items: flex-end; gap: 12px; margin-top: 8px; }
 .shot img { max-width: 140px; max-height: 96px; border: 1px solid #444; border-radius: 6px; object-fit: cover; }
 
-.steps { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.steps { list-style: none; margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .step { padding: 12px; border: 1px solid #2f2f2f; border-radius: 12px; background: #202020; }
 .step.pass { border-color: #2f5a3f; }
 .step.fail { border-color: #6b302b; }
