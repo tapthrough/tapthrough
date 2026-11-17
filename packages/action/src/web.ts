@@ -11,8 +11,11 @@ export interface WebInfo {
    * sign in first (Vercel Deployment Protection). `unknown`: couldn't tell.
    */
   access: 'open' | 'login' | 'unknown'
-  /** Whether `@tapthrough/next`'s launch route answered on the deployment. */
-  launch: 'ready' | 'missing' | 'unknown'
+  /**
+   * Whether `@tapthrough/next`'s launch route answered on the deployment.
+   * `off`: the team runs without test data (`test-data: off`), so there is none.
+   */
+  launch: 'ready' | 'missing' | 'unknown' | 'off'
 }
 
 interface Deployment {
@@ -123,6 +126,16 @@ export function previewHost(url: string): string {
 export async function probePreview(
   url: string,
   doFetch: typeof fetch = fetch,
+  testData: 'on' | 'off' = 'on',
+): Promise<Pick<WebInfo, 'access' | 'launch'>> {
+  const probe = await probeLaunchRoute(url, doFetch)
+  // Without test data there's no launch route to find; only who can get in matters.
+  return testData === 'off' ? { access: probe.access, launch: 'off' } : probe
+}
+
+async function probeLaunchRoute(
+  url: string,
+  doFetch: typeof fetch,
 ): Promise<Pick<WebInfo, 'access' | 'launch'>> {
   let response: Response
   try {

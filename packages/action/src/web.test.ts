@@ -125,6 +125,13 @@ describe('probePreview', () => {
     })
   })
 
+  it('reports test data as off without looking for a launch route problem', async () => {
+    expect(await probePreview(url, answer(404), 'off')).toEqual({ access: 'open', launch: 'off' })
+    expect(await probePreview(url, answer(401), 'off')).toEqual({ access: 'login', launch: 'off' })
+    expect(probeWarning({ access: 'open', launch: 'off' })).toBeNull()
+    expect(probeWarning({ access: 'login', launch: 'off' })).toContain('Deployment Protection')
+  })
+
   it('never throws', async () => {
     const down = (async () => {
       throw new Error('ECONNREFUSED')

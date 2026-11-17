@@ -250,7 +250,9 @@ async function mainWeb(workingDir: string, apiUrl: string) {
     })
   }
   const host = previewHost(url)
-  const probe = await probePreview(url)
+  const testData = input('test-data') || 'on'
+  if (testData !== 'on' && testData !== 'off') throw new Error('`test-data` must be `on` or `off`.')
+  const probe = await probePreview(url, fetch, testData)
   const warning = probeWarning(probe)
   if (warning) console.log(`::warning::${warning}`)
 
