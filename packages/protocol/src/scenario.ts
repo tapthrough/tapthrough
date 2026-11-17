@@ -3,8 +3,19 @@ import { z } from 'zod'
 /** A reference into the seed hook's output, e.g. `$seed.notes[0].id`. */
 export const SEED_REF_PREFIX = '$seed.'
 
-export const Platform = z.enum(['ios', 'android'])
+/** Where a PR's build runs. `web` is a preview deployment opened in a browser. */
+export const Platform = z.enum(['ios', 'android', 'web'])
 export type Platform = z.infer<typeof Platform>
+
+/** The platforms that run in a development build on a phone or simulator. */
+export const NativePlatform = z.enum(['ios', 'android'])
+export type NativePlatform = z.infer<typeof NativePlatform>
+
+/**
+ * Where a web preview receives launch links: `https://<deployment>/api/tapthrough/launch?t=<token>`.
+ * Under `/api` because apps commonly leave it out of their login redirect.
+ */
+export const WEB_LAUNCH_PATH = '/api/tapthrough/launch'
 
 export const TestStep = z.object({
   /** What the reviewer does: "Clear the title and tap Save". */
@@ -38,7 +49,7 @@ export const Seed = z
 export type Seed = z.infer<typeof Seed>
 
 export const Route = z.object({
-  /** Expo Router path, e.g. `/notes/[id]/edit`. */
+  /** File-router path (Expo Router or Next.js), e.g. `/notes/[id]/edit`. */
   path: z.string().startsWith('/'),
   /** Values may reference seed output with `$seed.` paths. */
   params: z.record(z.string(), z.string()).default({}),

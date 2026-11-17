@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { Platform } from './scenario.js'
 
 export const RouteEntry = z.object({
-  /** Expo Router path, e.g. `/notes/[id]/edit`. Groups like `(tabs)` are removed. */
+  /** File-router path, e.g. `/notes/[id]/edit`. Groups like `(tabs)` are removed. */
   path: z.string().startsWith('/'),
   /** Source file, relative to the repo root. */
   file: z.string().min(1),
@@ -27,9 +27,13 @@ export const PresetSummary = z.object({
 export type PresetSummary = z.infer<typeof PresetSummary>
 
 /** What the Action works out on the customer's runner, without an LLM. */
+/** The file router the routes were read from. */
+export const Framework = z.enum(['expo-router', 'next-app'])
+export type Framework = z.infer<typeof Framework>
+
 export const Manifest = z.object({
   apiVersion: z.literal(1),
-  framework: z.literal('expo-router'),
+  framework: Framework,
   routes: z.array(RouteEntry),
   changedFiles: z.array(z.string()),
   affected: z.array(AffectedRoute),
@@ -78,7 +82,13 @@ export const RunReport = z.object({
   pr: z.number().int().positive(),
   sha: z.string().regex(/^[0-9a-f]{40}$/),
   platform: Platform,
+  /** The native runtime the update needs; `web` on web, where there is none. */
   runtimeVersion: z.string().min(1),
+  /**
+   * The build's ID, which reports from the running app carry back. On iOS and
+   * Android it's the EAS update group; on web it's the preview deployment's
+   * host, e.g. `acme-git-fix-title-acme.vercel.app`.
+   */
   updateGroupId: z.string().min(1),
   manifest: Manifest,
   diff: z.string().max(MAX_DIFF_LENGTH),

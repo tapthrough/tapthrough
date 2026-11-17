@@ -69,7 +69,7 @@ export async function requestLaunch(
   return launch.data
 }
 
-const PLATFORM_NAME: Record<Platform, string> = { ios: 'iOS', android: 'Android' }
+const PLATFORM_NAME: Record<Platform, string> = { ios: 'iOS', android: 'Android', web: 'Web' }
 
 /** The plan as instructions an agent can follow, one scenario at a time. */
 export function formatAgentPlan(plan: AgentPlan, link: string, platform: Platform): string {

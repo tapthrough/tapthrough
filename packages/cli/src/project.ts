@@ -1,23 +1,36 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import type { RouteEntry } from '@tapthrough/protocol'
+import type { Framework, RouteEntry } from '@tapthrough/protocol'
 import { type Aliases, aliasesFromTsconfig } from './imports.js'
-import { routesFromFiles } from './routes.js'
+import { detectFramework, frameworkRoutes, shellFiles } from './routes.js'
 
 const SOURCE = /\.(tsx?|jsx?|mjs|cjs)$/
 const MAX_SOURCE_FILES = 5000
 const MAX_SOURCE_BYTES = 512 * 1024
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.expo', 'ios', 'android'])
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.expo',
+  '.next',
+  'ios',
+  'android',
+])
 
-/** An Expo Router app as the CLI sees it. Paths are relative to the repo root. */
+/** An Expo Router or Next.js app as the CLI sees it. Paths are relative to the repo root. */
 export interface Project {
   root: string
-  /** The Expo app's directory, relative to the root ('' when it's the root). */
+  /** The app's directory, relative to the root ('' when it's the root). */
   appRoot: string
-  /** `src/app` or `app` under appRoot, or null when there's no Expo Router directory. */
+  /** From package.json; Expo Router when it names neither. */
+  framework: Framework
+  /** `src/app` or `app` under appRoot, or null when there's no router directory. */
   appDir: string | null
   routes: RouteEntry[]
+  /** Layouts and other files that shape every screen below them. */
+  shells: string[]
   sources: Map<string, string>
   aliases: Aliases
   /** Reads a file under appRoot, or null if it's missing. */
@@ -76,7 +89,15 @@ export function loadProject(dir: string): Project {
     ['src/app', 'app']
       .map((sub) => (appRoot ? `${appRoot}/${sub}` : sub))
       .find((candidate) => existsSync(path.join(root, candidate))) ?? null
-  const routes = appDir ? routesFromFiles(appDir, files) : []
+  let packageJson: string | null = null
+  try {
+    packageJson = readFileSync(path.join(appPath, 'package.json'), 'utf8')
+  } catch {
+    packageJson = null
+  }
+  const framework = detectFramework(packageJson) ?? 'expo-router'
+  const routes = appDir ? frameworkRoutes(framework, appDir, files) : []
+  const shells = appDir ? shellFiles(framework, appRoot, appDir, files) : []
 
   const sources = new Map<string, string>()
   for (const file of files.filter((f) => SOURCE.test(f) && !f.includes('node_modules/'))) {
@@ -107,8 +128,10 @@ export function loadProject(dir: string): Project {
   return {
     root,
     appRoot,
+    framework,
     appDir,
     routes,
+    shells,
     sources,
     aliases: aliasesFromTsconfig(read('tsconfig.json'), appRoot || '.'),
     read,

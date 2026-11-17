@@ -1,7 +1,7 @@
-import type { Platform } from '@tapthrough/protocol'
+import type { NativePlatform } from '@tapthrough/protocol'
 
 export interface PlatformUpdate {
-  platform: Platform
+  platform: NativePlatform
   updateGroupId: string
   runtimeVersion: string
 }
@@ -24,7 +24,7 @@ export function parseEasUpdateJson(text: string): PlatformUpdate[] {
     throw new Error('The update JSON has no updates. Did `eas update` publish anything?')
   }
 
-  const byPlatform = new Map<Platform, PlatformUpdate>()
+  const byPlatform = new Map<NativePlatform, PlatformUpdate>()
   for (const entry of json) {
     const { platform, group, runtimeVersion } = (entry ?? {}) as Record<string, unknown>
     if (platform !== 'ios' && platform !== 'android') continue

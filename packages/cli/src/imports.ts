@@ -132,14 +132,15 @@ function importersOf(sources: Map<string, string>, aliases: Aliases): Map<string
 }
 
 /**
- * Files that shape a route's screen besides its own file: the `_layout` files
- * in its folder and every folder above it, up to the app directory.
+ * Files that shape a route's screen besides its own file: the layout files
+ * in its folder and every folder above it.
  */
 export function layoutsAbove(routeFile: string, layoutFiles: string[]): string[] {
   const dir = path.posix.dirname(routeFile)
   return layoutFiles.filter((layout) => {
     const layoutDir = path.posix.dirname(layout)
-    return dir === layoutDir || dir.startsWith(`${layoutDir}/`)
+    // A file at the repo root (a Next.js proxy, say) is above everything.
+    return layoutDir === '.' || dir === layoutDir || dir.startsWith(`${layoutDir}/`)
   })
 }
 
@@ -151,7 +152,7 @@ export function layoutsAbove(routeFile: string, layoutFiles: string[]): string[]
  */
 export function routeReach(input: {
   routes: RouteEntry[]
-  /** `_layout` files under the app directory. */
+  /** Layouts and other shells, from `shellFiles`. */
   layouts: string[]
   changedFiles: string[]
   sources: Map<string, string>
