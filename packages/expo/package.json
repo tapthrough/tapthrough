@@ -47,6 +47,7 @@
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
+    "@tapthrough/core": "workspace:^",
     "@tapthrough/protocol": "workspace:^"
   },
   "peerDependencies": {

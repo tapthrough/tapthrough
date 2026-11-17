@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
 import {
   getFlagOverride,
   getFlagOverrides,
+  resetQueryClient,
+  resetStorage,
+  resetStores,
   setFlagOverrides,
   subscribeToFlagOverrides,
-} from './core/flags.js'
-import { resetQueryClient, resetStorage, resetStores } from './core/reset.js'
+} from '@tapthrough/core'
+import { describe, expect, it, vi } from 'vitest'
 import { supabaseAuth } from './supabase.js'
 
 describe('flag overrides', () => {

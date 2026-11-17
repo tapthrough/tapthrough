@@ -1,3 +1,12 @@
+import {
+  type Annotation,
+  type AnnotationStroke,
+  addStrokePoint,
+  boxFromDrag,
+  finishStroke,
+  MAX_ANNOTATIONS,
+  strokeSegments,
+} from '@tapthrough/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Animated,
@@ -9,15 +18,6 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native'
-import {
-  type Annotation,
-  type AnnotationStroke,
-  addStrokePoint,
-  boxFromDrag,
-  finishStroke,
-  MAX_ANNOTATIONS,
-  strokeSegments,
-} from './core/annotations.js'
 import { useBackPress } from './Overlay.js'
 import type { Screenshot } from './screenshot.js'
 

@@ -1,4 +1,4 @@
-import { parseLaunchUrl } from './core/url.js'
+import { parseLaunchUrl } from '@tapthrough/core'
 import { controller } from './runtime.js'
 
 /**
