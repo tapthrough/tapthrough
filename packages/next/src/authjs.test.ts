@@ -44,8 +44,8 @@ describe('authJsAuth', () => {
     )
     await authJsAuth({ env: {} }).signIn({ token: 'new' }, jar, https)
     expect(jar.headers()).toEqual([
-      '__Secure-authjs.session-token.0=; Path=/; Max-Age=0',
-      '__Secure-authjs.session-token.1=; Path=/; Max-Age=0',
+      '__Secure-authjs.session-token.0=; Path=/; Max-Age=0; Secure',
+      '__Secure-authjs.session-token.1=; Path=/; Max-Age=0; Secure',
       '__Secure-authjs.session-token=new; Path=/; HttpOnly; Secure; SameSite=Lax',
     ])
   })

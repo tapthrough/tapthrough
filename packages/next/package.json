@@ -1,6 +1,6 @@
 {
   "name": "@tapthrough/next",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Tapthrough SDK for Next.js: opens a pull request's preview deployment on the right page, logged in with seeded data",
   "license": "MIT",
   "repository": {

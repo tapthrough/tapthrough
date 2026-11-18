@@ -1,10 +1,14 @@
 import {
+  approveMessage,
+  approvePr,
   type Checklist,
   type ChecklistStep,
   checklistProgress,
   type Diagnostics,
   failedStepBody,
   fetchChecklist,
+  fetchOpenPrs,
+  type OpenPr,
   type PreviewContext,
   type Progress,
   type Results,
@@ -48,7 +52,13 @@ export interface ReviewState {
   progress: Progress
   /** Earlier reports checked again this session, by finding ID. */
   rechecked: Readonly<Record<string, RecheckResult>>
-  /** IDs with a request in flight: a step ID, `report`, `setup:<key>` or `recheck:<id>`. */
+  /** The repo's open PRs with previews; null until loaded, or when Tapthrough can't say. */
+  pulls: OpenPr[] | null
+  /** Someone approved this PR after testing it, here or on another device. */
+  approved: boolean
+  /** What Approve did, once this reviewer pressed it. */
+  approveNote: string | null
+  /** IDs with a request in flight: a step ID, `report`, `approve`, `setup:<key>` or `recheck:<id>`. */
   busy: ReadonlySet<string>
   /** The last thing that went wrong, said for a reviewer. */
   error: string | null
@@ -82,6 +92,9 @@ export function createReviewStore(config: ReviewConfig) {
     results: {},
     progress: EMPTY_PROGRESS,
     rechecked: {},
+    pulls: null,
+    approved: false,
+    approveNote: null,
     busy: new Set(),
     error: null,
     lastReportUrl: null,
@@ -237,6 +250,32 @@ export function createReviewStore(config: ReviewConfig) {
         return false
       }
       set({ rechecked: { ...state.rechecked, [findingId]: result } })
+      return true
+    },
+
+    /** The repo's other open PRs, and whether this one is already approved. */
+    async loadPulls() {
+      const pulls = await fetchOpenPrs(preview, 'web', options)
+      if (!pulls) return
+      const current = pulls.find((pr) => pr.current)
+      // An approval made here stands even if the list was read just before it.
+      set({ pulls, approved: state.approved || Boolean(current?.approved) })
+    },
+
+    /** Tells the team the PR is good to merge, after testing it. */
+    async approve(name?: string) {
+      busy('approve', true)
+      set({ error: null })
+      const result = await approvePr(
+        { caller: { kind: 'build', preview }, platform: 'web', ...(name ? { by: name } : {}) },
+        options,
+      )
+      busy('approve', false)
+      if (!result.ok) {
+        set({ error: result.message })
+        return false
+      }
+      set({ approved: true, approveNote: approveMessage(result.approve) })
       return true
     },
 

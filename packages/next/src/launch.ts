@@ -117,7 +117,10 @@ export function createLaunchRoute(
       expectedAudiences: [options.appId],
       reset: [
         () => {
-          for (const name of options.clearCookies ?? []) jar.set(name, '', { maxAge: 0 })
+          for (const name of options.clearCookies ?? []) {
+            // Browsers ignore `__Secure-` and `__Host-` cookies set without `Secure`, deletions included.
+            jar.set(name, '', { maxAge: 0, secure: /^__(Secure|Host)-/.test(name) })
+          }
         },
       ],
       auth: {

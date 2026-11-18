@@ -23,9 +23,13 @@ import { TapthroughPanel } from '@tapthrough/react'
 | `appId` | The app ID registered with Tapthrough. |
 | `apiUrl` | Tapthrough's base URL, if you run your own. |
 
-Reviewers can pass or fail each step, report an issue with a screenshot (captured, picked or pasted),
-and check earlier reports again after a new push. A report also carries the page, the browser, and recent
-console errors and failed requests, with credentials removed.
+The panel lists what to check on the PR and walks the reviewer through it one step at a time, as the
+phone app does: a brief for each scenario, Pass or Fail on each step, a summary, then **Approve PR**.
+Reviewers can report an issue with a screenshot (captured, picked or pasted) and check earlier reports
+again after a new push. A report also carries the page, the browser, and recent console errors and
+failed requests, with credentials removed.
+
+Where the reviewer is in the panel is kept in `sessionStorage`, so it survives a page load.
 
 `TapthroughPanel` is a small loader. It fetches the panel when it mounts, and renders it in its own
 shadow root with its own React root, so your styles can't change it and its styles can't leak. It shows

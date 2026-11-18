@@ -59,7 +59,10 @@ export function authJsAuth(options: AuthJsAuthOptions = {}): ServerAuthAdapter {
       const name = options.cookieName ?? authJsCookieName(new URL(request.url).protocol, env)
       // A session left over from the reviewer's own login may be split into `.0`, `.1` chunks.
       for (const cookie of cookies.getAll()) {
-        if (cookie.name.startsWith(`${name}.`)) cookies.set(cookie.name, '', { maxAge: 0 })
+        if (cookie.name.startsWith(`${name}.`)) {
+          // A browser ignores a `__Secure-` cookie set without `Secure`, deletions included.
+          cookies.set(cookie.name, '', { maxAge: 0, secure: name.startsWith('__Secure-') })
+        }
       }
       cookies.set(name, picked, {
         httpOnly: true,
