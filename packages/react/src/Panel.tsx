@@ -1079,34 +1079,6 @@ function renderView(c: Ctx, nav: Nav): Screen {
   return doneView(c, scenario)
 }
 
-/** Matches `.panel`'s width in styles.ts. */
-const PANEL_WIDTH = 380
-/** Below this the page would be squeezed too far, so the panel lies over it instead. */
-const BESIDE_MIN_WIDTH = 900
-
-/**
- * Makes room for the open panel by narrowing the page, so the panel sits next
- * to the app instead of covering its right edge, where pages often keep their
- * main button. The page's own margin is put back when the panel closes.
- */
-function useBesidePage(active: boolean) {
-  useEffect(() => {
-    if (!active || typeof window.matchMedia !== 'function') return
-    const wide = window.matchMedia(`(min-width: ${BESIDE_MIN_WIDTH}px)`)
-    const root = document.documentElement
-    const before = root.style.marginRight
-    const apply = () => {
-      root.style.marginRight = wide.matches ? `${PANEL_WIDTH}px` : before
-    }
-    apply()
-    wide.addEventListener('change', apply)
-    return () => {
-      wide.removeEventListener('change', apply)
-      root.style.marginRight = before
-    }
-  }, [active])
-}
-
 export interface PanelProps {
   store: ReviewStore
   /** Goes to a launch link; defaults to a full page load, which the launch needs. */
@@ -1241,9 +1213,6 @@ export function Panel({
     lastNav.current = nav
     if (open && nav.view !== 'fail' && nav.view !== 'report') titleRef.current?.focus()
   }, [nav, open])
-
-  // Not while capturing: the screenshot shows the page at its full width.
-  useBesidePage(open && !capturing && ready)
 
   const { checklist } = state
   if (state.status !== 'ready' || !checklist) return null
