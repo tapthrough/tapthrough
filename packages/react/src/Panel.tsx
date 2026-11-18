@@ -1117,6 +1117,8 @@ export interface PanelProps {
   captureTab?: () => Promise<Screenshot | null>
   /** The page the reviewer is on; defaults to `location.pathname`. */
   currentPath?: () => string | undefined
+  /** The scenario a Tapthrough link set this browser up for, from the launch cookie. */
+  launchedScenarioId?: string | undefined
 }
 
 const pathname = () => window.location.pathname
@@ -1131,6 +1133,7 @@ export function Panel({
   defaultOpen = false,
   captureTab: capturer,
   currentPath = pathname,
+  launchedScenarioId,
 }: PanelProps) {
   const state = useReview(store)
   const [open, setOpen] = useState(defaultOpen)
@@ -1149,6 +1152,8 @@ export function Panel({
   const resumed = useRef(false)
   /** Whether this opening has already picked its first screen. */
   const placed = useRef(false)
+  /** This page load came straight from a link, which has already set the scenario up. */
+  const freshLaunch = useRef(defaultOpen && launchedScenarioId !== undefined)
   const lastNav = useRef(nav)
   const leaveTo = navigate ?? ((url: string) => window.location.assign(url))
   const ready = state.status === 'ready' && state.checklist !== null
@@ -1199,19 +1204,36 @@ export function Panel({
   useEffect(() => {
     if (!open || !ready || placed.current) return
     placed.current = true
+    const { checklist, results } = store.getState()
+    const launched = launchedScenarioId
+      ? checklist?.scenarios.find((s) => s.id === launchedScenarioId && s.steps.length > 0)
+      : undefined
+    if (freshLaunch.current) {
+      freshLaunch.current = false
+      if (launched) {
+        // The link was for this scenario and has set it up: go to its steps, past
+        // the brief, unless an earlier page load was already somewhere in it.
+        resumed.current = false
+        setNav((now) =>
+          'key' in now && now.key === launched.key ? now : startScenario(launched, results),
+        )
+        return
+      }
+    }
     if (resumed.current) {
       resumed.current = false
       return
     }
-    const { checklist, results } = store.getState()
-    const here = checklist?.scenarios.find(
+    // Two scenarios can share a page; the one this browser was set up for comes first.
+    const onThisPage = (checklist?.scenarios ?? []).filter(
       (s) =>
         s.steps.length > 0 &&
         routeMatches(s.routePath, currentPath()) &&
         nextOpenStep(s, results) >= 0,
     )
+    const here = onThisPage.find((s) => s === launched) ?? onThisPage[0]
     setNav((now) => (now.view === 'list' && here ? openScenario(here, results) : now))
-  }, [open, ready, store, currentPath])
+  }, [open, ready, store, currentPath, launchedScenarioId])
 
   // A new screen starts at its title, for a keyboard or a screen reader.
   useEffect(() => {

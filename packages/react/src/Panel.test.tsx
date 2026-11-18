@@ -607,6 +607,76 @@ describe('Panel', () => {
       expect(within(panel).getByText('Step 2 of 2')).toBeTruthy()
     })
 
+    describe('two scenarios on one page', () => {
+      const step = (action: string) => ({ index: 0, action, expect: 'It is there', result: null })
+      const twins: Checklist = {
+        ...base,
+        scenarios: [
+          {
+            id: 'scn-empty',
+            key: 'dash-empty',
+            title: 'Dashboard: no jobs',
+            routePath: '/dashboard',
+            steps: [step('Look for the empty state')],
+          },
+          {
+            id: 'scn-full',
+            key: 'dash-full',
+            title: 'Dashboard: open jobs',
+            routePath: '/dashboard',
+            steps: [step('Count the jobs')],
+          },
+        ],
+      }
+      const renderLaunched = (props: { defaultOpen: boolean }) => {
+        const stub = api(twins)
+        const store = createReviewStore({
+          apiUrl: 'https://tapthrough.test',
+          host: 'acme-1.vercel.app',
+          appId: 'app.acme.com',
+          fetch: stub.fetch,
+          currentPath: () => '/dashboard',
+        })
+        render(
+          <Panel
+            store={store}
+            currentPath={() => '/dashboard'}
+            launchedScenarioId="scn-full"
+            {...props}
+          />,
+        )
+      }
+
+      it('straight from a link, opens on that link’s scenario at its first step, past the brief', async () => {
+        renderLaunched({ defaultOpen: true })
+        const panel = await screen.findByRole('complementary', { name: 'Tapthrough review' })
+        await waitFor(() => expect(heading(panel)).toBe('Dashboard: open jobs'))
+        expect(within(panel).getByText('Count the jobs')).toBeTruthy()
+        expect(button(panel, 'Pass: Count the jobs')).toBeTruthy()
+      })
+
+      it('a link wins over where an earlier visit left the panel', async () => {
+        window.sessionStorage.setItem(
+          'tapthrough:panel',
+          JSON.stringify({
+            pr: 12,
+            open: true,
+            nav: { view: 'step', key: 'dash-empty', index: 0 },
+          }),
+        )
+        renderLaunched({ defaultOpen: true })
+        const panel = await screen.findByRole('complementary', { name: 'Tapthrough review' })
+        await waitFor(() => expect(heading(panel)).toBe('Dashboard: open jobs'))
+      })
+
+      it('opened by hand later, still prefers the scenario this browser was set up for', async () => {
+        renderLaunched({ defaultOpen: false })
+        const user = userEvent.setup()
+        const panel = await openPanel(user)
+        await waitFor(() => expect(heading(panel)).toBe('Dashboard: open jobs'))
+      })
+    })
+
     it("stays closed after a page load if it was closed, or if that was another PR's", async () => {
       window.sessionStorage.setItem(
         'tapthrough:panel',
