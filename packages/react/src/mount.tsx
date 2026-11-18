@@ -50,7 +50,9 @@ export function mount(element: HTMLElement, config: MountConfig): () => void {
   })
   const root = createRoot(container)
   // Open straight after a launch, so the reviewer sees what to check.
-  root.render(<Panel store={store} defaultOpen={justLaunched(scenarioId)} />)
+  root.render(
+    <Panel store={store} defaultOpen={justLaunched(scenarioId)} launchedScenarioId={scenarioId} />,
+  )
   // Unmounting inside another root's commit warns; let that render finish first.
   return () => {
     setTimeout(() => root.unmount(), 0)

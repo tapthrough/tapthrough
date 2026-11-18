@@ -213,6 +213,8 @@ export interface SetupLine {
 }
 
 export interface ChecklistScenario {
+  /** The ID a link token for this scenario carries. Older servers omit it. */
+  id?: string
   key: string
   title: string
   routePath: string
