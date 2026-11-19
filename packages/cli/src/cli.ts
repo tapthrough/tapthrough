@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
-import { Platform, parseLibrary, parsePlanFile, SCENARIO_DIR } from '@tapthrough/protocol'
+import {
+  FIXTURES_DIR,
+  Platform,
+  parseLibrary,
+  parsePlanFile,
+  SCENARIO_DIR,
+} from '@tapthrough/protocol'
 import {
   DEFAULT_SERVER,
   fetchAgentPlan,
@@ -143,7 +149,12 @@ async function main(argv: string[]): Promise<number> {
       return 1
     }
     const plans = readPlans(project)
-    const issues = checkScenarios({ routes: project.routes, library, plans })
+    const issues = checkScenarios({
+      routes: project.routes,
+      library,
+      plans,
+      readFixtures: (name) => project.read(`${FIXTURES_DIR}/${name}.json`),
+    })
     const count =
       library.scenarios.length +
       plans.reduce((n, p) => n + (p.result.status === 'ok' ? p.result.plan.scenarios.length : 0), 0)

@@ -1,4 +1,4 @@
-import type { AuthAdapter, ResetTarget } from '@tapthrough/core'
+import type { AuthAdapter, FixtureStorage, ResetTarget } from '@tapthrough/core'
 import { type NotificationsAdapter, prReadyUrl, setFlagOverrides } from '@tapthrough/core'
 import Constants from 'expo-constants'
 import * as Linking from 'expo-linking'
@@ -7,7 +7,7 @@ import { type ReactNode, useEffect } from 'react'
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
 import { ReportButton } from './Feedback.js'
 import { useLaunchState } from './hooks.js'
-import { controller, pluginConfig } from './runtime.js'
+import { controller, fixtureHost, pluginConfig } from './runtime.js'
 
 export interface TapthroughProps {
   children: ReactNode
@@ -18,8 +18,16 @@ export interface TapthroughProps {
   auth?: AuthAdapter
   /** Local state to clear before logging in: query caches, persisted keys, stores. */
   reset?: ResetTarget[]
-  /** Overrides the config plugin's `seedHookUrl`. */
+  /**
+   * Overrides the config plugin's `seedHookUrl`. An app with no seed hook can
+   * still open scenarios that use fixtures.
+   */
   seedHookUrl?: string
+  /**
+   * Keeps a scenario's fixtures across app restarts: pass AsyncStorage or
+   * anything shaped like it. Without it they last until the app is closed.
+   */
+  fixtureStorage?: FixtureStorage
   /** Overrides the config plugin's `enabled`. Off unless one of them turns it on. */
   enabled?: boolean
   /** Shows the Report button on PR previews. Defaults to true. */
@@ -46,6 +54,7 @@ export function Tapthrough({
   auth = noAuth,
   reset,
   seedHookUrl,
+  fixtureStorage,
   enabled,
   feedback = true,
   apiUrl,
@@ -56,25 +65,28 @@ export function Tapthrough({
   const hookUrl = seedHookUrl ?? config.seedHookUrl
   const navigationReady = Boolean(useRootNavigationState()?.key)
 
+  const api = apiUrl ?? config.apiUrl
+  // Taken during render, not in an effect: screens fetch in their own effects,
+  // which run before this component's, and those requests must be answered too.
+  const fixtures = isEnabled ? fixtureHost(fixtureStorage) : undefined
+
   useEffect(() => {
     if (!isEnabled) return
-    if (!hookUrl) {
-      console.warn('[tapthrough] Enabled without a seedHookUrl; launch links will be ignored.')
-      return
-    }
     const config = Constants.expoConfig
     const audiences = [config?.ios?.bundleIdentifier, config?.android?.package].filter(
       (id): id is string => typeof id === 'string',
     )
     controller.configure({
       seedHookUrl: hookUrl,
+      apiUrl: api,
       expectedAudiences: audiences,
       auth,
       reset: reset ?? [],
       applyFlags: setFlagOverrides,
+      fixtures: fixtures?.set,
     })
     return () => controller.configure(undefined)
-  }, [isEnabled, hookUrl, auth, reset])
+  }, [isEnabled, hookUrl, api, auth, reset, fixtures])
 
   useEffect(() => {
     if (!navigationReady) return
@@ -115,8 +127,8 @@ export function Tapthrough({
       {children}
       {(isEnabled || config.staff) && feedback ? (
         <ReportButton
-          apiUrl={apiUrl ?? config.apiUrl}
-          canSetUp={Boolean(hookUrl)}
+          apiUrl={api}
+          canSetUp={isEnabled}
           appKey={config.staff ? config.appKey : undefined}
           notifications={notifications}
         />

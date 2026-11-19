@@ -152,3 +152,86 @@ export function installFixtures(
 }
 
 const ORIGINAL = Symbol.for('tapthrough.fixtures.originalFetch')
+
+/** AsyncStorage, MMKV, `localStorage` or anything shaped like them. */
+export interface FixtureStorage {
+  getItem(key: string): string | null | undefined | Promise<string | null | undefined>
+  setItem(key: string, value: string): void | Promise<void>
+  removeItem(key: string): void | Promise<void>
+}
+
+export interface FixtureHostOptions extends FixtureFetchOptions {
+  /**
+   * Where the active fixtures are kept, so they survive the app restarting.
+   * Without it they last until the app is closed.
+   */
+  storage?: FixtureStorage
+  storageKey?: string
+  target?: { fetch: typeof fetch }
+  /** Checks what storage held; return undefined to drop it. */
+  parse: (stored: unknown) => Fixtures | undefined
+}
+
+export interface FixtureHost {
+  /** Starts answering from these fixtures, or stops when there are none. */
+  set(fixtures: Fixtures | undefined): Promise<void>
+  current(): Fixtures | undefined
+  /** Resolves once stored fixtures, if any, are back in place. */
+  ready: Promise<void>
+  /** Puts the original `fetch` back. Stored fixtures are kept. */
+  uninstall(): void
+}
+
+export const FIXTURE_STORAGE_KEY = 'tapthrough:fixtures'
+
+/**
+ * Owns `fetch` for a preview build. It takes over at once, and holds the
+ * app's first requests until stored fixtures have loaded, so a restarted app
+ * never reaches the real backend with a fixture's fake session.
+ */
+export function createFixtureHost(options: FixtureHostOptions): FixtureHost {
+  const target = options.target ?? (globalThis as { fetch: typeof fetch })
+  const key = options.storageKey ?? FIXTURE_STORAGE_KEY
+  const original = target.fetch
+  const real = original.bind(target)
+  const origin =
+    options.origin ?? (globalThis as { location?: { origin?: string } }).location?.origin
+  let fixtures: Fixtures | undefined
+  let active: typeof fetch | undefined
+
+  function apply(next: Fixtures | undefined) {
+    fixtures = next
+    active = next ? createFixtureFetch(next, real, { onCall: options.onCall, origin }) : undefined
+  }
+
+  const ready = (async () => {
+    if (!options.storage) return
+    try {
+      const stored = await options.storage.getItem(key)
+      // A launch that finished while storage was loading wins.
+      if (stored && !fixtures) apply(options.parse(JSON.parse(stored)))
+    } catch {
+      // Unreadable storage means no fixtures, not a broken app.
+    }
+  })()
+
+  const hosted: typeof fetch = async (input, init) => {
+    await ready
+    return active ? active(input, init) : real(input, init)
+  }
+  target.fetch = hosted
+
+  return {
+    async set(next) {
+      apply(next)
+      if (!options.storage) return
+      if (next) await options.storage.setItem(key, JSON.stringify(next))
+      else await options.storage.removeItem(key)
+    },
+    current: () => fixtures,
+    ready,
+    uninstall() {
+      if (target.fetch === hosted) target.fetch = original
+    },
+  }
+}

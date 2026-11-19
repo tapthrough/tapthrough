@@ -1,6 +1,11 @@
 import { Fixtures } from '@tapthrough/protocol'
 import { describe, expect, it, vi } from 'vitest'
-import { createFixtureFetch, type FixtureCall, installFixtures } from './fixtures.js'
+import {
+  createFixtureFetch,
+  createFixtureHost,
+  type FixtureCall,
+  installFixtures,
+} from './fixtures.js'
 
 const real = () => vi.fn<typeof fetch>(async () => new Response('real', { status: 200 }))
 
@@ -147,5 +152,66 @@ describe('installFixtures', () => {
     expect(await (await target.fetch('https://x.dev/api/me')).json()).toEqual({ id: 2 })
     uninstall()
     expect(target.fetch).toBe(network)
+  })
+})
+
+describe('createFixtureHost', () => {
+  const parse = (stored: unknown) => Fixtures.safeParse(stored).data
+  const memory = (initial?: string) => {
+    const items = new Map<string, string>(initial ? [['tapthrough:fixtures', initial]] : [])
+    return {
+      items,
+      getItem: async (key: string) => items.get(key) ?? null,
+      setItem: async (key: string, value: string) => void items.set(key, value),
+      removeItem: async (key: string) => void items.delete(key),
+    }
+  }
+
+  it('passes requests through until fixtures are set, then answers from them', async () => {
+    const network = real()
+    const target = { fetch: network as typeof fetch }
+    const host = createFixtureHost({ target, parse })
+    expect(await (await target.fetch('https://api.acme.com/v1/applications')).text()).toBe('real')
+    await host.set(fixtures)
+    expect(await (await target.fetch('https://api.acme.com/v1/applications')).json()).toHaveLength(
+      2,
+    )
+    await host.set(undefined)
+    expect(await (await target.fetch('https://api.acme.com/v1/applications')).text()).toBe('real')
+    host.uninstall()
+    expect(target.fetch).toBe(network)
+  })
+
+  it('stores fixtures and brings them back after a restart, before the first request', async () => {
+    const storage = memory()
+    const first = createFixtureHost({ target: { fetch: real() as typeof fetch }, storage, parse })
+    await first.set(fixtures)
+    expect(storage.items.size).toBe(1)
+
+    const network = real()
+    const target = { fetch: network as typeof fetch }
+    createFixtureHost({ target, storage, parse })
+    // Requested straight away, while storage is still loading.
+    const response = await target.fetch('https://api.acme.com/v1/applications/a1')
+    expect(await response.json()).toEqual({ id: 'a1', title: 'Designer' })
+    expect(network).not.toHaveBeenCalled()
+  })
+
+  it('forgets stored fixtures when they are cleared', async () => {
+    const storage = memory(JSON.stringify(fixtures))
+    const host = createFixtureHost({ target: { fetch: real() as typeof fetch }, storage, parse })
+    await host.ready
+    expect(host.current()).toBeDefined()
+    await host.set(undefined)
+    expect(storage.items.size).toBe(0)
+  })
+
+  it('ignores stored fixtures it cannot read', async () => {
+    const network = real()
+    const target = { fetch: network as typeof fetch }
+    const host = createFixtureHost({ target, storage: memory('{not json'), parse })
+    await host.ready
+    expect(host.current()).toBeUndefined()
+    expect(await (await target.fetch('https://api.acme.com/v1/applications')).text()).toBe('real')
   })
 })
