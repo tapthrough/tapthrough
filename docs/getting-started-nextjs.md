@@ -332,6 +332,10 @@ a real host yet.
 
 ## When something's off
 
+Run `npx @tapthrough/cli doctor` first. It checks the layout, the workflow and your scenarios, and with
+`--url <preview-url>` it asks the preview whether the launch route is on and `TAPTHROUGH_ENV` is valid.
+See [check your setup](doctor.md).
+
 | You see | Cause |
 | --- | --- |
 | No Tapthrough comment | The workflow didn't run or failed. Open its log; the Action says what it was waiting for. |

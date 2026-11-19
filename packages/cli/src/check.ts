@@ -1,9 +1,37 @@
-import type { PlanFileResult, RouteEntry, ScenarioSpec } from '@tapthrough/protocol'
+import {
+  type PlanFileResult,
+  parseLibrary,
+  parsePlanFile,
+  type RouteEntry,
+  SCENARIO_DIR,
+  type ScenarioSpec,
+} from '@tapthrough/protocol'
 import { routeParams } from './map.js'
+import type { Project } from './project.js'
 
 export interface Issue {
   file: string
   message: string
+}
+
+/** The scenario library in `.tapthrough/scenarios`, parsed. */
+export function readLibrary(project: Pick<Project, 'read' | 'list'>) {
+  const files = project
+    .list(SCENARIO_DIR)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => ({ name, text: project.read(`${SCENARIO_DIR}/${name}`) ?? '' }))
+  return parseLibrary(files)
+}
+
+/** The plan files in `.tapthrough/plans`, parsed. */
+export function readPlans(project: Pick<Project, 'read' | 'list'>) {
+  return project
+    .list('.tapthrough/plans')
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => {
+      const file = `.tapthrough/plans/${name}`
+      return { file, result: parsePlanFile(project.read(file)) }
+    })
 }
 
 function routeIssues(scenario: ScenarioSpec, known: Set<string>): string[] {

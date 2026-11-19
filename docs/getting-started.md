@@ -237,6 +237,9 @@ install that build first, with its status and an Install link. Later pushes reus
 - Choose the profile with `native-build-profile` (up to two, like `development, development-simulator`),
   or set it to `off`.
 
+Before the first PR, run `npx @tapthrough/cli doctor`. It checks the config plugin, the root layout, the
+workflow and your scenarios, and says what to fix. See [check your setup](doctor.md).
+
 ## 5. Land reviewers on the right screen (optional)
 
 Without more setup, links open your app's first screen with the PR's code. To open a specific screen with
