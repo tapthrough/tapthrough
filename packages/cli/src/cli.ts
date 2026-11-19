@@ -1,12 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
-import {
-  FIXTURES_DIR,
-  Platform,
-  parseLibrary,
-  parsePlanFile,
-  SCENARIO_DIR,
-} from '@tapthrough/protocol'
+import { FIXTURES_DIR, Platform } from '@tapthrough/protocol'
 import {
   DEFAULT_SERVER,
   fetchAgentPlan,
@@ -15,15 +9,18 @@ import {
   requestLaunch,
 } from './agent.js'
 import { detectRepo, formatAppKey, githubToken, requestAppKey } from './app-key.js'
-import { checkScenarios, formatIssues } from './check.js'
+import { checkScenarios, formatIssues, readLibrary, readPlans } from './check.js'
+import { doctorExitCode, formatDoctor, liveChecks, runDoctor, withLiveChecks } from './doctor.js'
 import { buildMap, formatMap } from './map.js'
-import { loadProject, type Project } from './project.js'
+import { loadProject } from './project.js'
 
 const HELP = `Usage: tapthrough <command> [options]
 
 Commands:
   map     List your app's screens and the scenarios that open each one
   check   Validate .tapthrough/scenarios and .tapthrough/plans against your routes
+  doctor  Check your setup before the first PR: the SDK, the workflow, scenarios.
+          With --url, also ask a preview deployment or seed hook how it is set up
   plan    <pr-link>  What to check on a PR, for an agent driving a simulator
   launch  <pr-link> --scenario <key>  Print a single-use link that signs in,
           seeds and opens one scenario (expires in 15 minutes)
@@ -36,29 +33,13 @@ Options:
   --scenario <key>     The scenario to launch
   --server <url>       Tapthrough server for bare link IDs (default: $TAPTHROUGH_URL or ${DEFAULT_SERVER})
   --repo <owner/name>  The GitHub repo (app-key; default: the origin remote)
-  --json               Print machine-readable output (map, plan, launch, app-key)
+  --url <url>          A preview deployment or a seed hook to check (doctor)
+  --json               Print machine-readable output (map, plan, launch, app-key, doctor)
   -h, --help           Show this help
 
 Docs: https://github.com/tapthrough/tapthrough/blob/main/docs/scenario-map.md
+      https://github.com/tapthrough/tapthrough/blob/main/docs/doctor.md
       https://github.com/tapthrough/tapthrough/blob/main/docs/agent-review.md`
-
-function readLibrary(project: Project) {
-  const files = project
-    .list(SCENARIO_DIR)
-    .filter((name) => name.endsWith('.json'))
-    .map((name) => ({ name, text: project.read(`${SCENARIO_DIR}/${name}`) ?? '' }))
-  return parseLibrary(files)
-}
-
-function readPlans(project: Project) {
-  return project
-    .list('.tapthrough/plans')
-    .filter((name) => name.endsWith('.json'))
-    .map((name) => {
-      const file = `.tapthrough/plans/${name}`
-      return { file, result: parsePlanFile(project.read(file)) }
-    })
-}
 
 async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
@@ -71,6 +52,7 @@ async function main(argv: string[]): Promise<number> {
       scenario: { type: 'string' },
       server: { type: 'string' },
       repo: { type: 'string' },
+      url: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   })
@@ -133,6 +115,22 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const project = loadProject(values.dir)
+
+  if (command === 'doctor') {
+    let report = runDoctor(project)
+    if (values.url) {
+      // Ten seconds per request: a preview that hangs shouldn't hang the doctor.
+      const timedFetch: typeof fetch = (input, init) =>
+        fetch(input, { ...init, signal: AbortSignal.timeout(10_000) })
+      report = withLiveChecks(
+        report,
+        await liveChecks(values.url, { fetch: timedFetch, testData: report.testData }),
+      )
+    }
+    console.log(values.json ? JSON.stringify(report, null, 2) : formatDoctor(report))
+    return doctorExitCode(report)
+  }
+
   const library = readLibrary(project)
 
   if (command === 'map') {

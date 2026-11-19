@@ -33,6 +33,54 @@ export interface LaunchRouteOptions {
 
 const NO_STORE = { 'Cache-Control': 'no-store' }
 
+/** The values `TAPTHROUGH_ENV` may have for the seed hook to run; `@tapthrough/seed` enforces them. */
+const SEED_ENVIRONMENTS = ['staging', 'development']
+
+/**
+ * What `GET /api/tapthrough/launch?status=1` answers, for `tapthrough doctor`.
+ * Setup facts only. It never carries a secret, a URL or an environment value
+ * other than the two allowed ones.
+ */
+export interface LaunchStatus {
+  tapthrough: {
+    status: 1
+    /** Always true: where the route is off it answers 404 instead. */
+    enabled: true
+    testData: {
+      /** Always true: the launch route can't be made without a seed hook. */
+      configured: true
+      /** `in-app` when the seed handler was passed in, `url` when it runs elsewhere. */
+      seed: 'in-app' | 'url'
+      /** Whether an auth adapter signs the reviewer in. */
+      auth: boolean
+    }
+    /**
+     * `TAPTHROUGH_ENV` in this deployment. A valid value is shown; anything
+     * else is described by its length only.
+     */
+    seedEnvironment: { valid: true; value: string } | { valid: false; set: boolean; length: number }
+  }
+}
+
+function launchStatus(options: LaunchRouteOptions, env: Env): LaunchStatus {
+  const value = env.TAPTHROUGH_ENV
+  return {
+    tapthrough: {
+      status: 1,
+      enabled: true,
+      testData: {
+        configured: true,
+        seed: typeof options.seed === 'function' ? 'in-app' : 'url',
+        auth: options.auth !== undefined,
+      },
+      seedEnvironment:
+        value !== undefined && SEED_ENVIRONMENTS.includes(value)
+          ? { valid: true, value }
+          : { valid: false, set: value !== undefined && value !== '', length: value?.length ?? 0 },
+    },
+  }
+}
+
 function escapeHtml(text: string): string {
   return text.replace(
     /[&<>"']/g,
@@ -88,6 +136,10 @@ const STATUS: Record<string, number> = {
  * ```
  *
  * Outside preview deployments it answers 404, as if it weren't there.
+ *
+ * With `?status=1` it answers a `LaunchStatus` instead of launching, so
+ * `tapthrough doctor --url` can check a preview's setup. That too is a 404
+ * outside preview deployments.
  */
 export function createLaunchRoute(
   options: LaunchRouteOptions,
@@ -101,6 +153,9 @@ export function createLaunchRoute(
     }
 
     const url = new URL(request.url)
+    if (url.searchParams.get('status') === '1') {
+      return Response.json(launchStatus(options, env), { headers: NO_STORE })
+    }
     const token = url.searchParams.get('t')
     if (!token) {
       return errorPage({ code: 'missing_token', message: 'This link is incomplete.' }, 400)
