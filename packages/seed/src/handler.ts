@@ -111,7 +111,11 @@ export function createSeedHandler(
         pr: claims.pr,
         role: scenario.seed.role,
       }
-      const result = await runSeed(scenario.seed, context, options)
+      // Fixtures need nothing from this backend: hand them on for the app to answer from.
+      const result =
+        scenario.seed.tier === 1
+          ? { session: fixturesOf(scenario).session ?? {}, refs: {} }
+          : await runSeed(scenario.seed, context, options)
 
       return Response.json(
         {
@@ -120,6 +124,7 @@ export function createSeedHandler(
           refs: result.refs ?? {},
           route: scenario.route,
           flags: scenario.flags,
+          ...(scenario.seed.tier === 1 ? { fixtures: fixturesOf(scenario) } : {}),
         } satisfies SeedHookResponse,
         { headers: { 'Cache-Control': 'no-store' } },
       )
@@ -181,6 +186,17 @@ async function redeem(token: string, issuer: string, doFetch: typeof fetch) {
   return scenario.data
 }
 
+function fixturesOf(scenario: RedeemResponse) {
+  if (!scenario.fixtures) {
+    throw new SeedError(
+      'fixtures_missing',
+      `Tapthrough sent no fixtures for "${scenario.seed.fixtures}". Check the file is in .tapthrough/fixtures on this PR.`,
+      502,
+    )
+  }
+  return scenario.fixtures
+}
+
 async function runSeed(
   seed: RedeemResponse['seed'],
   context: SeedContext,
@@ -192,10 +208,6 @@ async function runSeed(
     }
     return options.sharedAccount(context)
   }
-  if (seed.tier === 1) {
-    throw new SeedError('tier_unsupported', 'Network mocks are not supported yet', 501)
-  }
-
   const name = seed.preset as string
   const preset = Object.hasOwn(options.presets, name) ? options.presets[name] : undefined
   if (!preset) throw new SeedError('unknown_preset', `Unknown preset "${name}"`, 400)

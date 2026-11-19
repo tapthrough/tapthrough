@@ -1,9 +1,39 @@
-import type { PlanFileResult, RouteEntry, ScenarioSpec } from '@tapthrough/protocol'
+import {
+  FIXTURES_DIR,
+  Fixtures,
+  type PlanFileResult,
+  parseLibrary,
+  parsePlanFile,
+  type RouteEntry,
+  SCENARIO_DIR,
+  type ScenarioSpec,
+} from '@tapthrough/protocol'
 import { routeParams } from './map.js'
+import type { Project } from './project.js'
 
 export interface Issue {
   file: string
   message: string
+}
+
+/** The scenario library in `.tapthrough/scenarios`, parsed. */
+export function readLibrary(project: Pick<Project, 'read' | 'list'>) {
+  const files = project
+    .list(SCENARIO_DIR)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => ({ name, text: project.read(`${SCENARIO_DIR}/${name}`) ?? '' }))
+  return parseLibrary(files)
+}
+
+/** The plan files in `.tapthrough/plans`, parsed. */
+export function readPlans(project: Pick<Project, 'read' | 'list'>) {
+  return project
+    .list('.tapthrough/plans')
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => {
+      const file = `.tapthrough/plans/${name}`
+      return { file, result: parsePlanFile(project.read(file)) }
+    })
 }
 
 function routeIssues(scenario: ScenarioSpec, known: Set<string>): string[] {
@@ -22,6 +52,29 @@ function routeIssues(scenario: ScenarioSpec, known: Set<string>): string[] {
   return issues
 }
 
+/** A scenario that uses fixtures needs its file to exist and to be readable. */
+function fixtureIssues(
+  scenario: ScenarioSpec,
+  read: ((name: string) => string | null) | undefined,
+): string[] {
+  const name = scenario.seed.fixtures
+  if (scenario.seed.tier !== 1 || !name || !read) return []
+  const file = `${FIXTURES_DIR}/${name}.json`
+  const text = read(name)
+  if (text === null) return [`fixtures "${name}" not found. Add ${file}.`]
+  let json: unknown
+  try {
+    json = JSON.parse(text)
+  } catch {
+    return [`${file} isn't valid JSON`]
+  }
+  const parsed = Fixtures.safeParse(json)
+  if (parsed.success) return []
+  const issue = parsed.error.issues[0]
+  const where = issue?.path.length ? ` at ${issue.path.join('.')}` : ''
+  return [`${file} is invalid${where}: ${issue?.message}`]
+}
+
 /**
  * Everything that would make a scenario open the wrong place or not at all:
  * files the service would reject, routes that aren't screens, and unfilled
@@ -31,6 +84,8 @@ export function checkScenarios(input: {
   routes: RouteEntry[]
   library: { scenarios: ScenarioSpec[]; errors: Issue[] }
   plans: { file: string; result: PlanFileResult }[]
+  /** Reads `.tapthrough/fixtures/<name>.json`; null when there is no such file. */
+  readFixtures?: (name: string) => string | null
 }): Issue[] {
   const known = new Set(input.routes.map((route) => route.path))
   const keys = new Set(input.library.scenarios.map((scenario) => scenario.key))
@@ -40,7 +95,11 @@ export function checkScenarios(input: {
   }))
 
   for (const scenario of input.library.scenarios) {
-    for (const message of routeIssues(scenario, known)) {
+    const messages = [
+      ...routeIssues(scenario, known),
+      ...fixtureIssues(scenario, input.readFixtures),
+    ]
+    for (const message of messages) {
       issues.push({ file: `.tapthrough/scenarios/${scenario.key}.json`, message })
     }
   }
@@ -55,7 +114,11 @@ export function checkScenarios(input: {
       if (!keys.has(key)) issues.push({ file, message: `include "${key}" isn't in the library` })
     }
     for (const scenario of result.plan.scenarios) {
-      for (const message of routeIssues(scenario, known)) {
+      const messages = [
+        ...routeIssues(scenario, known),
+        ...fixtureIssues(scenario, input.readFixtures),
+      ]
+      for (const message of messages) {
         issues.push({ file, message: `${scenario.key}: ${message}` })
       }
     }

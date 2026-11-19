@@ -1,6 +1,6 @@
 {
   "name": "@tapthrough/seed",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Seed-hook handler for Tapthrough: verifies a link token, runs a preset and returns a logged-in session",
   "license": "MIT",
   "repository": {

@@ -32,19 +32,28 @@ export type TestStep = z.infer<typeof TestStep>
 /**
  * How the reviewer's starting state is produced.
  * - tier 0: a shared test account, no seeding
- * - tier 1: network mocks (not in v1)
+ * - tier 1: network fixtures; the SDK answers the app's requests, no backend needed
  * - tier 2: a customer-defined preset run by their seed hook
  */
 export const Seed = z
   .object({
     tier: z.union([z.literal(0), z.literal(1), z.literal(2)]),
     preset: z.string().min(1).optional(),
+    /** Tier 1: the fixture file's name, `.tapthrough/fixtures/<name>.json`. */
+    fixtures: z
+      .string()
+      .regex(/^[\w.-]+$/)
+      .optional(),
     params: z.record(z.string(), z.unknown()).optional(),
     role: z.string().min(1).optional(),
   })
   .refine((seed) => seed.tier !== 2 || seed.preset !== undefined, {
     message: 'tier 2 requires a preset',
     path: ['preset'],
+  })
+  .refine((seed) => seed.tier !== 1 || seed.fixtures !== undefined, {
+    message: 'tier 1 requires fixtures',
+    path: ['fixtures'],
   })
 export type Seed = z.infer<typeof Seed>
 

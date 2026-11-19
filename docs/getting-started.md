@@ -19,7 +19,9 @@ it step by step` into Claude Code, Cursor or Codex. See [set up with your coding
 - A GitHub repo for it
 - An Expo account. Builds and updates run on **your** EAS plan, and Tapthrough never holds your Expo
   credentials.
-- **For seeded test data (optional):** a staging backend where creating test users is allowed
+- **For seeded test data (optional):** a stage environment where creating test users is allowed. Any
+  backend and any language works: see
+  [choosing how reviewers get their data](#choosing-how-reviewers-get-their-data).
 - **For push notifications (optional):** `expo-notifications`, and an Apple push key in your EAS
   credentials
 
@@ -237,6 +239,9 @@ install that build first, with its status and an Install link. Later pushes reus
 - Choose the profile with `native-build-profile` (up to two, like `development, development-simulator`),
   or set it to `off`.
 
+Before the first PR, run `npx @tapthrough/cli doctor`. It checks the config plugin, the root layout, the
+workflow and your scenarios, and says what to fix. See [check your setup](doctor.md).
+
 ## 5. Land reviewers on the right screen (optional)
 
 Without more setup, links open your app's first screen with the PR's code. To open a specific screen with
@@ -245,11 +250,31 @@ test data and a checklist:
 1. **Write scenarios** in `.tapthrough/scenarios/`, one per screen state. `npx @tapthrough/cli map` lists
    your screens and which ones still need one. See [plan files](plan-files.md) and
    [map your screens](scenario-map.md).
-2. **Deploy a seed hook** that creates the test data on your staging backend. See the
-   [seed hook README](../packages/seed/README.md). It only runs in `staging` or `development`, and only for
-   the repos you list.
-   It can be a Supabase edge function, or an Expo Router API route on EAS Hosting next to your app.
+2. **Deploy a seed hook** that creates the test data on your stage environment. It is one HTTP endpoint
+   in your own stack, in any language: see [the seed hook contract](seed-hook-contract.md). For
+   JavaScript, the [seed hook README](../packages/seed/README.md) has a ready-made handler. It only
+   runs in `staging` or `development`, and only for the repos you list.
+   It can be a route on your stage API, a Supabase edge function, or an Expo Router API route on EAS
+   Hosting next to your app.
    Reviewers can then tap **Set Up and Start** in the Review panel and the app sets itself up.
+
+Your coding agent can write the seed hook and its presets from your schema: see
+[step 6 of set up with your coding agent](onboard-with-your-agent.md#6-write-the-seed-hook-and-presets).
+
+### Choosing how reviewers get their data
+
+Tapthrough works with any backend, on any cloud or on-prem, in any language. It never hosts or
+provisions your database. Reviewers get their starting state in one of three ways, and each scenario
+picks one with its `seed.tier`:
+
+| Tier | What your team needs | When to use it |
+| --- | --- | --- |
+| **0: shared test account.** Reviewers use one test account on your stage environment. | A stage environment and a test account. Nothing to deploy if reviewers sign in by hand once. A seed hook with a shared test account handler if the link should sign them in. | To start, or when one account already has the data every screen needs and reviewers don't get in each other's way. |
+| **1: fixtures.** JSON files in `.tapthrough/fixtures/`. The SDK answers the app's network calls itself. | No backend work, and no seed hook. See [fixtures](fixtures.md). | When you can't add an endpoint to your backend. |
+| **2: seed hook.** One HTTP endpoint in your own stack creates a test user and data, and returns a session. | A stage environment where creating test users is allowed, and one endpoint on it, in any language. See [the seed hook contract](seed-hook-contract.md). | When screens need specific records, roles or empty states, or when reviewers must not see each other's changes. |
+
+One app can mix tiers: a scenario with `"seed": { "tier": 0 }` and another with a preset can sit side by
+side.
 
 ## 6. Tell reviewers when a PR is ready (optional)
 

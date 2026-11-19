@@ -211,4 +211,87 @@ describe('runLaunch', () => {
     await runLaunch('tok', d)
     expect(stages).toEqual(['seeding', 'resetting', 'signing_in'])
   })
+
+  describe('fixtures', () => {
+    const fixtures = {
+      v: 1 as const,
+      baseUrl: 'https://api.acme.com',
+      unmatched: 'error' as const,
+      session: { token: 'fake' },
+      routes: [],
+    }
+    const redeemed = {
+      apiVersion: 1,
+      scenarioId: 's1',
+      seed: { tier: 1, fixtures: 'with-notes' },
+      route: { path: '/notes', params: {} },
+      flags: {},
+      fixtures,
+    }
+
+    it('with no seed hook, redeems with Tapthrough and loads the fixtures before signing in', async () => {
+      const fetch = hook(redeemed)
+      const { deps: d, calls } = deps({
+        seedHookUrl: undefined,
+        apiUrl: 'https://tapthrough.test/',
+        fetch,
+        fixtures: vi.fn(async () => {
+          calls.push('fixtures')
+        }),
+      })
+      expect(await runLaunch('t', d)).toEqual({ ok: true, path: '/notes' })
+      expect(fetch.mock.calls[0]?.[0]).toBe('https://tapthrough.test/api/v1/tokens/redeem')
+      expect(d.fixtures).toHaveBeenCalledWith(fixtures)
+      expect(d.auth.signIn).toHaveBeenCalledWith({ token: 'fake' })
+      expect(calls).toEqual([
+        'reset:query',
+        'reset:storage',
+        'fixtures',
+        'signIn',
+        'flags',
+        'navigate:/notes',
+      ])
+    })
+
+    it('with no seed hook, refuses a scenario that needs seeded data', async () => {
+      const { fixtures: _none, ...withoutFixtures } = redeemed
+      const { deps: d, calls } = deps({
+        seedHookUrl: undefined,
+        apiUrl: 'https://tapthrough.test',
+        fetch: hook({ ...withoutFixtures, seed: { tier: 2, preset: 'p' } }),
+        fixtures: vi.fn(),
+      })
+      const result = await runLaunch('t', d)
+      expect(result).toMatchObject({ ok: false, error: { code: 'needs_seed_hook' } })
+      expect(calls).toEqual([])
+    })
+
+    it('takes fixtures a seed hook passes on', async () => {
+      const loaded = vi.fn()
+      const { deps: d } = deps({ fetch: hook({ ...seeded, fixtures }), fixtures: loaded })
+      expect((await runLaunch('t', d)).ok).toBe(true)
+      expect(loaded).toHaveBeenCalledWith(fixtures)
+    })
+
+    it('clears earlier fixtures when a scenario has none', async () => {
+      const loaded = vi.fn()
+      const { deps: d } = deps({ fixtures: loaded })
+      await runLaunch('t', d)
+      expect(loaded).toHaveBeenCalledWith(undefined)
+    })
+
+    it('fails clearly when the app cannot load fixtures, or has nowhere to redeem', async () => {
+      const { deps: old, calls } = deps({ fetch: hook({ ...seeded, fixtures }) })
+      expect(await runLaunch('t', old)).toMatchObject({
+        ok: false,
+        error: { code: 'fixtures_unsupported' },
+      })
+      expect(calls).toEqual([])
+      const { deps: bare } = deps({ seedHookUrl: undefined })
+      expect(await runLaunch('t', bare)).toMatchObject({
+        ok: false,
+        error: { code: 'not_configured' },
+      })
+    })
+  })
 })

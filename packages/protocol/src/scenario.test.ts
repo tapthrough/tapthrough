@@ -67,3 +67,13 @@ describe('schemas', () => {
     expect(scenario.route.params.id).toBe('$seed.notes[0].id')
   })
 })
+
+describe('Seed tier 1', () => {
+  it('requires a fixture file name', () => {
+    expect(Seed.safeParse({ tier: 1 }).success).toBe(false)
+    expect(Seed.safeParse({ tier: 1, fixtures: 'candidate-with-3-applications' }).success).toBe(
+      true,
+    )
+    expect(Seed.safeParse({ tier: 1, fixtures: '../secrets' }).success).toBe(false)
+  })
+})

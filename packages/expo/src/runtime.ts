@@ -1,8 +1,25 @@
-import { createLaunchController } from '@tapthrough/core'
+import {
+  createFixtureHost,
+  createLaunchController,
+  type FixtureHost,
+  type FixtureStorage,
+} from '@tapthrough/core'
+import { Fixtures } from '@tapthrough/protocol'
 import Constants from 'expo-constants'
 
 /** One controller per app, shared by `<Tapthrough>` and `redirectSystemPath`. */
 export const controller = createLaunchController()
+
+let host: FixtureHost | undefined
+
+/**
+ * The app's one fixture host, made the first time a preview build asks for it.
+ * It takes over `fetch`, so it is never made in a production build.
+ */
+export function fixtureHost(storage?: FixtureStorage): FixtureHost {
+  host ??= createFixtureHost({ storage, parse: (stored) => Fixtures.safeParse(stored).data })
+  return host
+}
 
 export const DEFAULT_API_URL = 'https://tapthrough-cloud.vercel.app'
 

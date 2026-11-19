@@ -222,6 +222,27 @@ describe('createSeedHandler', () => {
     expect(missing.body.error.code).toBe('tier_unsupported')
   })
 
+  it('passes fixtures on for tier 1, without running a preset', async () => {
+    const fixtures = {
+      v: 1 as const,
+      unmatched: 'error' as const,
+      session: { token: 'fake' },
+      routes: [{ method: 'GET' as const, url: '/me', status: 200, body: { id: 1 } }],
+    }
+    const scenario = { ...redeemed({ tier: 1, fixtures: 'with-notes' }), fixtures }
+    const ok = await post(handler({ fetch: api(scenario) }), { token: await mint() })
+    expect(ok.status).toBe(200)
+    expect(ok.body.session).toEqual({ token: 'fake' })
+    expect(ok.body.fixtures).toEqual(fixtures)
+
+    const missing = await post(
+      handler({ fetch: api(redeemed({ tier: 1, fixtures: 'with-notes' })) }),
+      { token: await mint() },
+    )
+    expect(missing.status).toBe(502)
+    expect(missing.body.error.code).toBe('fixtures_missing')
+  })
+
   it('hides preset errors from the caller and logs them instead', async () => {
     const broken = definePreset({
       description: 'Fails',

@@ -135,6 +135,82 @@ describe('createLaunchRoute', () => {
     expect((await open('')).status).toBe(400)
   })
 
+  describe('?status=1', () => {
+    it('reports setup facts without seeding or setting cookies', async () => {
+      const { seed, open } = route({
+        env: { ...preview, TAPTHROUGH_ENV: 'staging' },
+        auth: { signIn: async () => {} },
+      })
+      const response = await open('?status=1')
+      expect(response.status).toBe(200)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(response.headers.getSetCookie()).toEqual([])
+      expect(await response.json()).toEqual({
+        tapthrough: {
+          status: 1,
+          enabled: true,
+          appId: 'app.acme.com',
+          testData: { configured: true, seed: 'in-app', auth: true },
+          seedEnvironment: { valid: true, value: 'staging' },
+        },
+      })
+      expect(seed).not.toHaveBeenCalled()
+    })
+
+    it('describes an invalid TAPTHROUGH_ENV by its length, never its value', async () => {
+      const secret = 'postgres://user:hunter2@db.internal/app'
+      const { open } = route({
+        seed: 'https://hook.test/seed?key=hook-secret',
+        env: { ...preview, TAPTHROUGH_ENV: secret, DATABASE_URL: secret, AUTH_SECRET: 'shh' },
+      })
+      const text = await (await open('?status=1')).text()
+      expect(JSON.parse(text)).toEqual({
+        tapthrough: {
+          status: 1,
+          enabled: true,
+          appId: 'app.acme.com',
+          testData: { configured: true, seed: 'url', auth: false },
+          seedEnvironment: { valid: false, set: true, length: secret.length },
+        },
+      })
+      for (const leak of ['hunter2', 'postgres', 'hook.test', 'hook-secret', 'shh']) {
+        expect(text).not.toContain(leak)
+      }
+    })
+
+    it('says when TAPTHROUGH_ENV is unset, or set to "true"', async () => {
+      const status = async (env: Record<string, string>) =>
+        (await (await route({ env: { ...preview, ...env } }).open('?status=1')).json()).tapthrough
+          .seedEnvironment
+      expect(await status({})).toEqual({ valid: false, set: false, length: 0 })
+      expect(await status({ TAPTHROUGH_ENV: 'true' })).toEqual({
+        valid: false,
+        set: true,
+        length: 4,
+      })
+      expect(await status({ TAPTHROUGH_ENV: 'development' })).toEqual({
+        valid: true,
+        value: 'development',
+      })
+    })
+
+    it('is a 404 wherever the route is off, production included', async () => {
+      for (const options of [
+        { env: {} },
+        { env: { VERCEL_ENV: 'production', TAPTHROUGH_ENV: 'staging' } },
+        { enabled: true, env: { VERCEL_ENV: 'production', TAPTHROUGH_ENABLED: 'true' } },
+      ]) {
+        const response = await route(options).open('?status=1')
+        expect(response.status).toBe(404)
+        expect(await response.text()).toBe('Not found')
+      }
+    })
+
+    it('only answers to status=1', async () => {
+      expect((await route().open('?status=0')).status).toBe(400)
+    })
+  })
+
   it('never redirects off the site', async () => {
     for (const path of ['//evil.test/x', '/\\evil.test']) {
       const seed = async () => Response.json({ ...seeded, route: { path, params: {} } })

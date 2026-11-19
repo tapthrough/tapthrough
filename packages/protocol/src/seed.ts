@@ -1,7 +1,11 @@
 import { z } from 'zod'
+import { Fixtures } from './fixtures.js'
 import { Flags, Route, Seed } from './scenario.js'
 
-/** Body the seed hook sends to `POST /api/v1/tokens/redeem`. */
+/**
+ * Body of `POST /api/v1/tokens/redeem`. The seed hook sends it; an app with no
+ * seed hook sends it itself, which works for scenarios that use fixtures.
+ */
 export const RedeemRequest = z.object({
   token: z.string().min(1),
 })
@@ -14,6 +18,8 @@ export const RedeemResponse = z.object({
   seed: Seed,
   route: Route,
   flags: Flags.default({}),
+  /** Tier 1 only: the scenario's fixture file, read from the PR's commit. */
+  fixtures: Fixtures.optional(),
 })
 export type RedeemResponse = z.infer<typeof RedeemResponse>
 
@@ -32,6 +38,8 @@ export const SeedHookResponse = z.object({
   refs: z.record(z.string(), z.unknown()),
   route: Route,
   flags: Flags.default({}),
+  /** Tier 1 only: canned responses the SDK answers the app's requests with. */
+  fixtures: Fixtures.optional(),
 })
 export type SeedHookResponse = z.infer<typeof SeedHookResponse>
 

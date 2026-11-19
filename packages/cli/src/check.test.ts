@@ -14,6 +14,41 @@ function file(name: string, value: unknown) {
 }
 
 describe('checkScenarios', () => {
+  it('checks that the fixture file a scenario names exists and can be read', () => {
+    const library = parseLibrary([
+      file('good.json', {
+        title: 'Good',
+        route: { path: '/' },
+        seed: { tier: 1, fixtures: 'good' },
+      }),
+      file('gone.json', {
+        title: 'Gone',
+        route: { path: '/' },
+        seed: { tier: 1, fixtures: 'gone' },
+      }),
+      file('bad.json', { title: 'Bad', route: { path: '/' }, seed: { tier: 1, fixtures: 'bad' } }),
+    ])
+    const files: Record<string, string> = {
+      good: JSON.stringify({ v: 1, routes: [{ url: '/me', body: {} }] }),
+      bad: JSON.stringify({ v: 1, routes: [{ url: '/me', status: 99 }] }),
+    }
+    const issues = checkScenarios({
+      routes,
+      library,
+      plans: [],
+      readFixtures: (name) => files[name] ?? null,
+    })
+    const byFile = Object.fromEntries(issues.map((issue) => [issue.file, issue.message]))
+    expect(Object.keys(byFile).sort()).toEqual([
+      '.tapthrough/scenarios/bad.json',
+      '.tapthrough/scenarios/gone.json',
+    ])
+    expect(byFile['.tapthrough/scenarios/bad.json']).toContain(
+      '.tapthrough/fixtures/bad.json is invalid at routes.0.status',
+    )
+    expect(byFile['.tapthrough/scenarios/gone.json']).toContain('fixtures "gone" not found')
+  })
+
   it('passes scenarios that open real screens with every param filled', () => {
     const library = parseLibrary([
       file('home.json', { title: 'Home', route: { path: '/' }, seed: { tier: 0 } }),

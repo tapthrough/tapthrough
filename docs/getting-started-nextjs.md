@@ -203,9 +203,21 @@ the records it needs, including pages with `[param]` segments.
 give the Preview environment its own database variables. If previews share the production database,
 stay with `test-data: "off"`.
 
+A seed hook is one of three ways to give reviewers their data. See
+[choosing how reviewers get their data](getting-started.md#choosing-how-reviewers-get-their-data).
+
 ### The seed hook
 
-The seed hook creates the test user and data. It can live in the same app:
+The seed hook creates the test user and data. It is one HTTP endpoint, and
+[the seed hook contract](seed-hook-contract.md) describes it for any language. If your backend is not
+JavaScript, write the seed hook there, on your stage API, and pass its URL as `seed` to
+[the launch route](#the-launch-route).
+
+Your coding agent can write the seed hook and its presets from your schema: see
+[step 6 of set up with your coding agent](onboard-with-your-agent.md#6-write-the-seed-hook-and-presets).
+You then set `TAPTHROUGH_ENV` and deploy.
+
+In a JavaScript app, the seed hook can live in the same app:
 
 ```sh
 npm install @tapthrough/seed
@@ -234,9 +246,9 @@ export const POST = seedHandler
 The handler lives outside the route file because Next.js only allows a route file to export its HTTP
 methods and config.
 
-Set `TAPTHROUGH_ENV=staging` on the **Preview** environment only. The handler refuses to run unless it is
-`staging` or `development`. See the [`@tapthrough/seed` README](../packages/seed/README.md) for writing
-presets.
+Set `TAPTHROUGH_ENV=staging` on the **Preview** environment only, never on Production. The handler
+refuses to run unless it is `staging` or `development`. See the
+[`@tapthrough/seed` README](../packages/seed/README.md) for writing presets.
 
 ### The launch route
 
@@ -331,6 +343,10 @@ a real host yet.
 | `api-url` | Tapthrough's | Only if you run your own |
 
 ## When something's off
+
+Run `npx @tapthrough/cli doctor` first. It checks the layout, the workflow and your scenarios, and with
+`--url <preview-url>` it asks the preview whether the launch route is on and `TAPTHROUGH_ENV` is valid.
+See [check your setup](doctor.md).
 
 | You see | Cause |
 | --- | --- |

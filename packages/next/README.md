@@ -43,6 +43,10 @@ Supports the App Router on Vercel preview deployments. Web support is in beta.
   under 1 KB and never fetches the panel.
 - The launch route answers 404 outside preview deployments, and stays off in a Vercel production
   deployment even when `enabled` is passed.
+- `GET /api/tapthrough/launch?status=1` answers setup facts for `npx @tapthrough/cli doctor --url`: that
+  the route is on, whether the seed hook is in the app, whether an auth adapter is set, and whether
+  `TAPTHROUGH_ENV` is valid. It carries no secrets, never shows an invalid value (only its length), and is
+  a 404 wherever the launch route is.
 - On hosts other than Vercel, set `TAPTHROUGH_ENABLED=true` and `TAPTHROUGH_PREVIEW_HOST` in the preview
   environment only.
 

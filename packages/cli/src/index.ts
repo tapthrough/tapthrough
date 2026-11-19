@@ -1,5 +1,6 @@
 export * from './agent.js'
 export * from './check.js'
+export * from './doctor.js'
 export * from './imports.js'
 export * from './map.js'
 export * from './routes.js'
