@@ -9,7 +9,12 @@ export {
   serializeCookie,
 } from './cookies.js'
 export { type Env, type PreviewEnv, previewEnv } from './env.js'
-export { createLaunchRoute, type LaunchRouteOptions, type ServerAuthAdapter } from './launch.js'
+export {
+  createLaunchRoute,
+  type LaunchRouteOptions,
+  type LaunchStatus,
+  type ServerAuthAdapter,
+} from './launch.js'
 export {
   decodeState,
   flagOverride,
