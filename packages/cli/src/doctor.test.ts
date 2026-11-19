@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  checkLatest,
   type DoctorCheck,
   doctorExitCode,
   formatDoctor,
@@ -888,5 +889,131 @@ describe('withLiveChecks', () => {
     const full = withLiveChecks(report, live)
     expect(full.summary).toEqual({ pass: 10, warn: 0, fail: 0 })
     expect(full.checks.at(-1)?.id).toBe('live-launch')
+  })
+})
+
+describe('runDoctor with fixtures', () => {
+  const onFixtures = JSON.stringify({
+    title: 'Notes',
+    route: { path: '/' },
+    seed: { tier: 1, fixtures: 'notes' },
+  })
+  const fixtureFile = JSON.stringify({ v: 1, routes: [{ url: '/notes', body: [] }] })
+  const noHook = `export default { scheme: 'acme', plugins: [['@tapthrough/expo', {
+      enabled: process.env.APP_VARIANT !== 'production',
+    }]] }`
+
+  it('needs no seed hook when every scenario uses fixtures', () => {
+    const report = runDoctor(
+      expoApp({
+        'app.config.ts': noHook,
+        '.tapthrough/scenarios/home.json': onFixtures,
+        '.tapthrough/fixtures/notes.json': fixtureFile,
+      }),
+    )
+    const checks = byId(report.checks)
+    expect(checks['mobile-seed-hook']?.status).toBe('pass')
+    expect(checks['mobile-seed-hook']?.message).toContain('No seed hook is needed')
+    expect(checks.scenarios?.status).toBe('pass')
+  })
+
+  it('says how many scenarios still need a seed hook', () => {
+    const report = runDoctor(
+      expoApp({
+        'app.config.ts': noHook,
+        '.tapthrough/scenarios/home.json': onFixtures,
+        '.tapthrough/scenarios/other.json': scenario('/'),
+        '.tapthrough/fixtures/notes.json': fixtureFile,
+      }),
+    )
+    const check = byId(report.checks)['mobile-seed-hook']
+    expect(check?.status).toBe('warn')
+    expect(check?.message).toContain('1 scenario needs one')
+  })
+
+  it('fails a scenario whose fixture file is missing', () => {
+    const report = runDoctor(expoApp({ '.tapthrough/scenarios/home.json': onFixtures }))
+    const check = byId(report.checks).scenarios
+    expect(check?.status).toBe('fail')
+    expect(check?.details?.[0]).toContain('fixtures "notes" not found')
+  })
+
+  it('fails fixtures on a web app, where they are not supported yet', () => {
+    const report = runDoctor(
+      webApp({
+        '.tapthrough/scenarios/home.json': onFixtures,
+        '.tapthrough/fixtures/notes.json': fixtureFile,
+      }),
+    )
+    expect(byId(report.checks)['scenario-fixtures']?.status).toBe('fail')
+  })
+})
+
+describe('liveChecks on the deployed app ID', () => {
+  const withAppId = (appId: string) =>
+    Response.json({
+      tapthrough: {
+        status: 1,
+        enabled: true,
+        appId,
+        testData: { configured: true, seed: 'url', auth: true },
+        seedEnvironment: { valid: true, value: 'staging' },
+      },
+    })
+
+  it('passes when it matches the workflow, and fails when it differs', async () => {
+    const same = fakeFetch({ [STATUS_URL]: withAppId('app.acme.com') })
+    const ok = await liveChecks(PREVIEW, { fetch: same.doFetch, appId: 'app.acme.com' })
+    expect(byId(ok)['live-app-id']?.status).toBe('pass')
+
+    const other = fakeFetch({ [STATUS_URL]: withAppId('www.acme.com') })
+    const bad = await liveChecks(PREVIEW, { fetch: other.doFetch, appId: 'app.acme.com' })
+    expect(byId(bad)['live-app-id']?.status).toBe('fail')
+    expect(byId(bad)['live-app-id']?.message).toContain('"www.acme.com"')
+  })
+
+  it('says nothing when the deployment or the workflow gives no app ID', async () => {
+    const old = fakeFetch({ [STATUS_URL]: status({ valid: true, value: 'staging' }, 'url') })
+    const checks = await liveChecks(PREVIEW, { fetch: old.doFetch, appId: 'app.acme.com' })
+    expect(byId(checks)['live-app-id']).toBeUndefined()
+  })
+})
+
+describe('checkLatest', () => {
+  const registry = (versions: Record<string, string>) =>
+    fakeFetch(
+      Object.fromEntries(
+        Object.entries(versions).map(([name, version]) => [
+          `GET https://registry.npmjs.org/${name.replace('/', '%2f')}/latest`,
+          Response.json({ version }),
+        ]),
+      ),
+    )
+
+  it('warns about packages behind the newest release, and names only the packages', async () => {
+    const { doFetch, sent } = registry({
+      '@tapthrough/next': '0.1.3',
+      '@tapthrough/react': '0.2.2',
+    })
+    const checks = await checkLatest(
+      { '@tapthrough/next': ['0.1.2'], '@tapthrough/react': ['0.2.2'], zod: ['3.0.0'] },
+      doFetch,
+    )
+    expect(checks[0]?.status).toBe('warn')
+    expect(checks[0]?.details).toEqual(['@tapthrough/next 0.1.2 → 0.1.3'])
+    expect(sent).toHaveLength(2)
+    expect(sent.every((request) => request.body === undefined)).toBe(true)
+  })
+
+  it('passes when everything is current, and says so when it cannot tell', async () => {
+    const current = registry({ '@tapthrough/next': '0.1.3' })
+    expect((await checkLatest({ '@tapthrough/next': ['0.1.3'] }, current.doFetch))[0]?.status).toBe(
+      'pass',
+    )
+    const down = fakeFetch({})
+    expect((await checkLatest({ '@tapthrough/next': ['0.1.3'] }, down.doFetch))[0]?.status).toBe(
+      'warn',
+    )
+    expect((await checkLatest({}, down.doFetch))[0]?.status).toBe('warn')
   })
 })

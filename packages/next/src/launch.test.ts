@@ -149,6 +149,7 @@ describe('createLaunchRoute', () => {
         tapthrough: {
           status: 1,
           enabled: true,
+          appId: 'app.acme.com',
           testData: { configured: true, seed: 'in-app', auth: true },
           seedEnvironment: { valid: true, value: 'staging' },
         },
@@ -167,6 +168,7 @@ describe('createLaunchRoute', () => {
         tapthrough: {
           status: 1,
           enabled: true,
+          appId: 'app.acme.com',
           testData: { configured: true, seed: 'url', auth: false },
           seedEnvironment: { valid: false, set: true, length: secret.length },
         },

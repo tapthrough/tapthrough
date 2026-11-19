@@ -45,10 +45,11 @@ These checks read the files in your repo. They use no network.
 | `app-id` | Next.js: the app ID is the same in the layout, the launch route and the workflow. |
 | `mobile-plugin` | Expo: the config plugin is in `app.json` or `app.config.*`. |
 | `mobile-wrapper` | Expo: the root layout uses `<Tapthrough>`. |
-| `mobile-seed-hook` | Expo: `seedHookUrl` is set. |
+| `mobile-seed-hook` | Expo: `seedHookUrl` is set. It passes without one when every scenario uses [fixtures](fixtures.md), and otherwise says how many scenarios need a seed hook. |
 | `workflow` | A workflow in `.github/workflows` uses the Tapthrough action. It shows the `platform`, `app-id` and `test-data` inputs, and checks for `id-token: write`. |
 | `workflow-branches` | Which pull requests start the workflow. It warns when `on.pull_request` has `branches` or `paths`, because other PRs get no comment. |
-| `scenarios` | The same as `tapthrough check`: how many scenarios you have and how many have problems. |
+| `scenarios` | The same as `tapthrough check`: how many scenarios you have and how many have problems, including a fixture file that is missing or invalid. |
+| `scenario-fixtures` | Next.js: no scenario uses fixtures. They work in Expo apps only for now. |
 | `scenario-presets` | Each preset your scenarios use is named somewhere in your source. |
 
 The doctor reads source files as text. When it can't be sure, it says "Couldn't tell" as a warning
@@ -71,6 +72,7 @@ A URL with no path is a preview deployment. A URL with a path is a seed hook.
 | Check | What it does |
 | --- | --- |
 | `live-launch` | Sends `GET /api/tapthrough/launch?status=1` to the preview. It tells apart a missing route, a route that is off in this deployment, and a route that is on. |
+| `live-app-id` | Compares the app ID the deployed launch route uses with the workflow's `app-id`. If they differ, the app refuses every link. |
 | `live-seed-env` | Reads from that answer whether `TAPTHROUGH_ENV` is `staging` or `development`. Any other value stops the seed hook, for example `true`. |
 | `live-seed-hook` | Sends `POST { "token": "doctor" }` to the seed hook. The hook checks its environment first, then the token. So "environment" in the answer means `TAPTHROUGH_ENV` is wrong, and "invalid token" means the hook is reachable and its environment is right. |
 
@@ -80,7 +82,7 @@ preview or production.
 
 The launch route answers `?status=1` only where Tapthrough is on, so never on a Vercel production
 deployment. The answer has no secrets. It says that the route is on, whether the seed hook is in the
-app or at another URL, whether an auth adapter is set, and whether `TAPTHROUGH_ENV` is valid. A valid
+app or at another URL, whether an auth adapter is set, the app ID, and whether `TAPTHROUGH_ENV` is valid. A valid
 value is shown. An invalid value is never shown, only its length. This needs a version of
 `@tapthrough/next` that has the status answer; with an older one the doctor says so.
 
@@ -92,8 +94,14 @@ If the preview is behind Vercel Deployment Protection, the doctor can't reach th
 is safe to write test data to, and never on production. If your previews share the production
 database, keep `test-data: "off"`.
 
-It also can't tell whether a resolved SDK version is the latest. It shows the versions so you can
-compare them with npm.
+## Check for newer releases with `--latest`
+
+```sh
+npx @tapthrough/cli doctor --latest
+```
+
+This asks the npm registry for the newest version of each `@tapthrough` package in your lockfile, and
+warns about the ones that are behind. It sends the package names and nothing else.
 
 ## For scripts
 

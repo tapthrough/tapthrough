@@ -6,6 +6,7 @@ import type { Project } from './project.js'
 import { detectFramework } from './routes.js'
 
 export {
+  checkLatest,
   checkPreview,
   checkSeedHook,
   type LiveTarget,
@@ -30,6 +31,10 @@ export interface DoctorReport {
   framework: Framework | null
   /** The workflow's `test-data` input, when a workflow was found and could be read. */
   testData?: string
+  /** The workflow's `app-id` input, for web apps. */
+  appId?: string
+  /** Resolved @tapthrough versions from the lockfile, by package. */
+  versions?: Record<string, string[]>
   checks: DoctorCheck[]
   summary: Record<CheckStatus, number>
   /** What no check can verify. Always printed. */
@@ -428,7 +433,7 @@ function readExpoPlugin(project: Project): ExpoPlugin {
   return { listed: 'no', seedHookUrl: false }
 }
 
-function checkMobile(project: Project): DoctorCheck[] {
+function checkMobile(project: Project, needs: StateNeeds): DoctorCheck[] {
   const checks: DoctorCheck[] = []
   const plugin = readExpoPlugin(project)
   const example = "`['@tapthrough/expo', { enabled: process.env.APP_VARIANT !== 'production' }]`"
@@ -500,20 +505,51 @@ function checkMobile(project: Project): DoctorCheck[] {
       status: 'pass',
       message: `\`seedHookUrl\` is set${plugin.seedHookUrl ? ` in ${plugin.where}` : ' on <Tapthrough>'}. Run the doctor with --url <that URL> to check the hook answers.`,
     })
+  } else if (plugin.listed !== 'unknown' && needs.fixtures > 0 && needs.seedHook === 0) {
+    checks.push({
+      id: 'mobile-seed-hook',
+      status: 'pass',
+      message: `No seed hook is needed: ${needs.fixtures === 1 ? 'the scenario uses' : `all ${needs.fixtures} scenarios use`} fixtures.`,
+    })
   } else {
+    const count =
+      needs.seedHook > 0
+        ? `${plural(needs.seedHook, 'scenario')} need${needs.seedHook === 1 ? 's' : ''} one`
+        : ''
     checks.push({
       id: 'mobile-seed-hook',
       status: 'warn',
       message:
         plugin.listed === 'unknown'
-          ? "Couldn't tell whether `seedHookUrl` is set. Without it the app ignores launch links: no sign-in, no test data."
-          : "`seedHookUrl` isn't set, so the app ignores launch links: no sign-in, no test data. Deploy a seed hook and pass its URL to the config plugin.",
+          ? "Couldn't tell whether `seedHookUrl` is set. Without it, only scenarios that use fixtures open; the rest fail with no sign-in and no test data."
+          : `\`seedHookUrl\` isn't set${count ? `, and ${count}` : ''}. Without it, only scenarios that use fixtures open. Deploy a seed hook and pass its URL to the config plugin, or use fixtures (${DOCS}/fixtures.md).`,
     })
   }
   return checks
 }
 
-function checkScenarioFiles(project: Project): DoctorCheck[] {
+/** How many scenarios need each way of getting their starting state. */
+interface StateNeeds {
+  fixtures: number
+  /** Shared-account and preset scenarios; both go through the seed hook. */
+  seedHook: number
+}
+
+function readScenarios(project: Project): ScenarioSpec[] {
+  return [
+    ...readLibrary(project).scenarios,
+    ...readPlans(project).flatMap((plan) =>
+      plan.result.status === 'ok' ? plan.result.plan.scenarios : [],
+    ),
+  ]
+}
+
+function stateNeeds(scenarios: ScenarioSpec[]): StateNeeds {
+  const fixtures = scenarios.filter((scenario) => scenario.seed.tier === 1).length
+  return { fixtures, seedHook: scenarios.length - fixtures }
+}
+
+function checkScenarioFiles(project: Project, framework: Framework): DoctorCheck[] {
   const library = readLibrary(project)
   const plans = readPlans(project)
   const issues = checkScenarios({
@@ -544,6 +580,15 @@ function checkScenarioFiles(project: Project): DoctorCheck[] {
     })
   } else {
     checks.push({ id: 'scenarios', status: 'pass', message: `${count}, no problems.` })
+  }
+
+  const onFixtures = stateNeeds(scenarios).fixtures
+  if (framework === 'next-app' && onFixtures > 0) {
+    checks.push({
+      id: 'scenario-fixtures',
+      status: 'fail',
+      message: `${plural(onFixtures, 'scenario')} use${onFixtures === 1 ? 's' : ''} fixtures, which work in Expo apps only for now. On web, use a preset or a shared test account.`,
+    })
   }
 
   const presets = [
@@ -599,9 +644,13 @@ export function runDoctor(project: Project): DoctorReport {
   }
 
   const workflows = findWorkflows(project)
+  const lockfile = findLockfile(project)
+  const versions = lockfile ? resolvedVersions(lockfile.name, lockfile.text) : null
   checks.push(checkSdk(project, framework), checkVersions(project))
   checks.push(
-    ...(framework === 'next-app' ? checkWeb(project, workflows[0]) : checkMobile(project)),
+    ...(framework === 'next-app'
+      ? checkWeb(project, workflows[0])
+      : checkMobile(project, stateNeeds(readScenarios(project)))),
   )
   if (workflows.length === 0) {
     checks.push({
@@ -613,12 +662,14 @@ export function runDoctor(project: Project): DoctorReport {
   for (const workflow of workflows) {
     checks.push(checkWorkflow(workflow, framework), checkBranches(workflow))
   }
-  checks.push(...checkScenarioFiles(project))
+  checks.push(...checkScenarioFiles(project, framework))
 
   const inputs = workflows[0]?.inputs
   return {
     framework,
     ...(framework === 'next-app' && inputs ? { testData: inputs['test-data'] ?? 'on' } : {}),
+    ...(framework === 'next-app' && inputs?.['app-id'] ? { appId: inputs['app-id'] } : {}),
+    ...(versions && versions.size > 0 ? { versions: Object.fromEntries(versions) } : {}),
     checks,
     summary: summarize(checks),
     note: DATABASE_NOTE,

@@ -39,13 +39,15 @@ const SEED_ENVIRONMENTS = ['staging', 'development']
 /**
  * What `GET /api/tapthrough/launch?status=1` answers, for `tapthrough doctor`.
  * Setup facts only. It never carries a secret, a URL or an environment value
- * other than the two allowed ones.
+ * other than the two allowed ones. The app ID is public already.
  */
 export interface LaunchStatus {
   tapthrough: {
     status: 1
     /** Always true: where the route is off it answers 404 instead. */
     enabled: true
+    /** The app ID launch links must be made for. Not a secret: the page's own script carries it. */
+    appId: string
     testData: {
       /** Always true: the launch route can't be made without a seed hook. */
       configured: true
@@ -68,6 +70,7 @@ function launchStatus(options: LaunchRouteOptions, env: Env): LaunchStatus {
     tapthrough: {
       status: 1,
       enabled: true,
+      appId: options.appId,
       testData: {
         configured: true,
         seed: typeof options.seed === 'function' ? 'in-app' : 'url',

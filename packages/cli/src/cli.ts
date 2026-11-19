@@ -10,7 +10,14 @@ import {
 } from './agent.js'
 import { detectRepo, formatAppKey, githubToken, requestAppKey } from './app-key.js'
 import { checkScenarios, formatIssues, readLibrary, readPlans } from './check.js'
-import { doctorExitCode, formatDoctor, liveChecks, runDoctor, withLiveChecks } from './doctor.js'
+import {
+  checkLatest,
+  doctorExitCode,
+  formatDoctor,
+  liveChecks,
+  runDoctor,
+  withLiveChecks,
+} from './doctor.js'
 import { buildMap, formatMap } from './map.js'
 import { loadProject } from './project.js'
 
@@ -34,6 +41,7 @@ Options:
   --server <url>       Tapthrough server for bare link IDs (default: $TAPTHROUGH_URL or ${DEFAULT_SERVER})
   --repo <owner/name>  The GitHub repo (app-key; default: the origin remote)
   --url <url>          A preview deployment or a seed hook to check (doctor)
+  --latest             Also ask npm whether the @tapthrough packages are up to date (doctor)
   --json               Print machine-readable output (map, plan, launch, app-key, doctor)
   -h, --help           Show this help
 
@@ -53,6 +61,7 @@ async function main(argv: string[]): Promise<number> {
       server: { type: 'string' },
       repo: { type: 'string' },
       url: { type: 'string' },
+      latest: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   })
@@ -118,13 +127,20 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === 'doctor') {
     let report = runDoctor(project)
+    // Ten seconds per request: a preview that hangs shouldn't hang the doctor.
+    const timedFetch: typeof fetch = (input, init) =>
+      fetch(input, { ...init, signal: AbortSignal.timeout(10_000) })
+    if (values.latest) {
+      report = withLiveChecks(report, await checkLatest(report.versions ?? {}, timedFetch))
+    }
     if (values.url) {
-      // Ten seconds per request: a preview that hangs shouldn't hang the doctor.
-      const timedFetch: typeof fetch = (input, init) =>
-        fetch(input, { ...init, signal: AbortSignal.timeout(10_000) })
       report = withLiveChecks(
         report,
-        await liveChecks(values.url, { fetch: timedFetch, testData: report.testData }),
+        await liveChecks(values.url, {
+          fetch: timedFetch,
+          testData: report.testData,
+          appId: report.appId,
+        }),
       )
     }
     console.log(values.json ? JSON.stringify(report, null, 2) : formatDoctor(report))

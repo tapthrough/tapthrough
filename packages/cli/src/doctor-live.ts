@@ -36,6 +36,10 @@ export function liveTarget(input: string): LiveTarget {
 }
 
 /** Text from a server, made safe to print on one line. */
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? '' : 's'}`
+}
+
 function printable(text: string): string {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: removing them is the point
   const clean = text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').trim()
@@ -70,6 +74,8 @@ async function request(
 }
 
 interface LaunchStatus {
+  /** Absent from the first @tapthrough/next that had a status. */
+  appId?: string
   seed: 'in-app' | 'url'
   auth: boolean
   seedEnvironment: { valid: true; value: string } | { valid: false; set: boolean; length: number }
@@ -85,10 +91,12 @@ function parseLaunchStatus(text: string): LaunchStatus | null {
   if (!isObject(testData) || !isObject(environment)) return null
   const seed = testData.seed === 'url' ? 'url' : 'in-app'
   const auth = testData.auth === true
+  const appId = typeof body.appId === 'string' ? { appId: printable(body.appId) } : {}
   if (environment.valid === true && typeof environment.value === 'string') {
-    return { seed, auth, seedEnvironment: { valid: true, value: environment.value } }
+    return { ...appId, seed, auth, seedEnvironment: { valid: true, value: environment.value } }
   }
   return {
+    ...appId,
     seed,
     auth,
     seedEnvironment: {
@@ -228,6 +236,7 @@ export async function checkPreview(
   origin: string,
   doFetch: typeof fetch,
   testData?: string,
+  expectedAppId?: string,
 ): Promise<DoctorCheck[]> {
   const id = 'live-launch'
   const url = `${origin}${LAUNCH_PATH}`
@@ -264,6 +273,21 @@ export async function checkPreview(
       },
       seedEnvironmentCheck(status),
     ]
+    if (status.appId && expectedAppId) {
+      checks.push(
+        status.appId === expectedAppId
+          ? {
+              id: 'live-app-id',
+              status: 'pass',
+              message: `The deployed app ID matches the workflow's: ${status.appId}.`,
+            }
+          : {
+              id: 'live-app-id',
+              status: 'fail',
+              message: `This deployment's launch route uses app ID "${status.appId}", but the workflow sends "${printable(expectedAppId)}". Links are made for the workflow's ID, so the app refuses them as "for a different app". Make the two the same, then deploy again.`,
+            },
+      )
+    }
     if (status.seed === 'in-app') {
       checks.push(...(await checkSeedHook(`${origin}${SEED_PATH}`, doFetch, { optional: true })))
     }
@@ -341,11 +365,87 @@ export async function checkPreview(
  */
 export async function liveChecks(
   url: string,
-  options: { fetch: typeof fetch; testData?: string },
+  options: { fetch: typeof fetch; testData?: string; appId?: string },
 ): Promise<DoctorCheck[]> {
   const target = liveTarget(url)
   if (target.kind === 'invalid')
     return [{ id: 'live-url', status: 'fail', message: target.message }]
   if (target.kind === 'hook') return checkSeedHook(target.url, options.fetch)
-  return checkPreview(target.origin, options.fetch, options.testData)
+  return checkPreview(target.origin, options.fetch, options.testData, options.appId)
+}
+
+const REGISTRY = 'https://registry.npmjs.org'
+
+/** `1.2.3` → [1, 2, 3]; null for anything else, such as a prerelease. */
+function versionParts(version: string): [number, number, number] | null {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null
+}
+
+function isOlder(installed: string, latest: string): boolean {
+  const a = versionParts(installed)
+  const b = versionParts(latest)
+  if (!a || !b) return false
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return (a[i] as number) < (b[i] as number)
+  }
+  return false
+}
+
+/**
+ * Asks the npm registry for the newest version of each installed @tapthrough
+ * package. Only the package names are sent; they are public.
+ */
+export async function checkLatest(
+  installed: Record<string, string[]>,
+  doFetch: typeof fetch,
+): Promise<DoctorCheck[]> {
+  const id = 'sdk-latest'
+  const names = Object.keys(installed).filter((name) => name.startsWith('@tapthrough/'))
+  if (names.length === 0) {
+    return [
+      {
+        id,
+        status: 'warn',
+        message: "Couldn't tell: no @tapthrough versions were found in a lockfile to compare.",
+      },
+    ]
+  }
+  const answers = await Promise.all(
+    names.map(async (name) => {
+      const answer = await request(doFetch, `${REGISTRY}/${name.replace('/', '%2f')}/latest`, {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      })
+      const json = 'failed' in answer || answer.status !== 200 ? undefined : parseJson(answer.text)
+      const latest = isObject(json) && typeof json.version === 'string' ? json.version : undefined
+      return { name, latest }
+    }),
+  )
+  const unknown = answers.filter((answer) => !answer.latest).map((answer) => answer.name)
+  const behind = answers.flatMap(({ name, latest }) => {
+    if (!latest) return []
+    const old = (installed[name] ?? []).filter((version) => isOlder(version, latest))
+    return old.length > 0 ? [`${name} ${old.join(' and ')} → ${printable(latest)}`] : []
+  })
+  if (behind.length > 0) {
+    return [
+      {
+        id,
+        status: 'warn',
+        message: `${plural(behind.length, 'package')} behind the newest release. Upgrade the @tapthrough packages together.`,
+        details: behind,
+      },
+    ]
+  }
+  if (unknown.length > 0) {
+    return [
+      {
+        id,
+        status: 'warn',
+        message: `Couldn't tell: the npm registry gave no version for ${unknown.join(', ')}.`,
+      },
+    ]
+  }
+  return [{ id, status: 'pass', message: 'Every @tapthrough package is on its newest release.' }]
 }
