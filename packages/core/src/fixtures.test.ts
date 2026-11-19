@@ -2,8 +2,7 @@ import { Fixtures } from '@tapthrough/protocol'
 import { describe, expect, it, vi } from 'vitest'
 import { createFixtureFetch, type FixtureCall, installFixtures } from './fixtures.js'
 
-const real = () =>
-  vi.fn<typeof fetch>(async () => new Response('real', { status: 200 }))
+const real = () => vi.fn<typeof fetch>(async () => new Response('real', { status: 200 }))
 
 const fixtures = Fixtures.parse({
   v: 1,
@@ -22,9 +21,10 @@ const fixtures = Fixtures.parse({
 describe('createFixtureFetch', () => {
   it('answers a covered request without calling the network', async () => {
     const network = real()
-    const response = await createFixtureFetch(fixtures, network)(
-      'https://api.acme.com/v1/applications',
-    )
+    const response = await createFixtureFetch(
+      fixtures,
+      network,
+    )('https://api.acme.com/v1/applications')
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toBe('application/json')
     expect(await response.json()).toEqual([{ id: 'a1' }, { id: 'a2' }])
@@ -108,7 +108,10 @@ describe('createFixtureFetch', () => {
     vi.useFakeTimers()
     const slow = Fixtures.parse({ v: 1, routes: [{ url: '/slow', delayMs: 500, body: 1 }] })
     let done = false
-    const pending = createFixtureFetch(slow, real())('https://x.dev/slow').then(() => {
+    const pending = createFixtureFetch(
+      slow,
+      real(),
+    )('https://x.dev/slow').then(() => {
       done = true
     })
     await vi.advanceTimersByTimeAsync(499)
