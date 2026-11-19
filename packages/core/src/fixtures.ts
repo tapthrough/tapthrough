@@ -23,7 +23,7 @@ interface Compiled {
   path: RegExp
 }
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** `/users/:id/files/*` → a pattern for the whole path. A trailing slash is optional. */
 function pathPattern(path: string): RegExp {
@@ -33,7 +33,7 @@ function pathPattern(path: string): RegExp {
     .map((segment, index, all) => {
       if (segment === '*' && index === all.length - 1) return '.*'
       if (/^:\w+$/.test(segment)) return '[^/]+'
-      return escape(segment)
+      return escapeRegExp(segment)
     })
     .join('/')
   return new RegExp(`^${source}/?$`)
