@@ -9,6 +9,10 @@ never passes through Tapthrough.
 npm install @tapthrough/seed zod
 ```
 
+Backend not in JavaScript? The seed hook is a plain HTTP endpoint. See
+[the seed hook contract](https://github.com/tapthrough/tapthrough/blob/main/docs/seed-hook-contract.md)
+to write it in any language.
+
 ## What it does with each request
 
 1. Refuses to run unless `environment` is `staging` or `development`.
