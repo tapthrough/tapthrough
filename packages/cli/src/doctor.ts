@@ -182,7 +182,7 @@ function checkVersions(project: Project): DoctorCheck {
       lockfile.name === 'package-lock.json'
         ? 'npm dedupe'
         : lockfile.name === 'yarn.lock'
-          ? 'yarn dedupe'
+          ? 'yarn dedupe` (Yarn 2 or later) or `npx yarn-deduplicate && yarn install'
           : 'pnpm dedupe'
     return {
       id,
