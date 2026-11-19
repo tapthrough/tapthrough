@@ -69,7 +69,7 @@ In `.tapthrough/scenarios/<key>.json`:
 }
 ```
 
-Run `npx tapthrough check`. It reports a scenario whose fixture file is missing or invalid.
+Run `npx @tapthrough/cli check`. It reports a scenario whose fixture file is missing or invalid.
 
 ## 3. Set up the app
 
