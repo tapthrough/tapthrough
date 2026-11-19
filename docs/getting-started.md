@@ -267,7 +267,7 @@ picks one with its `seed.tier`:
 | Tier | What your team needs | When to use it |
 | --- | --- | --- |
 | **0: shared test account.** Reviewers use one test account on your stage environment. | A stage environment and a test account. Nothing to deploy if reviewers sign in by hand once. A seed hook with a shared test account handler if the link should sign them in. | To start, or when one account already has the data every screen needs and reviewers don't get in each other's way. |
-| **1: fixtures.** JSON files in `.tapthrough/fixtures/`. The SDK answers the app's network calls itself. | No backend work. This tier is being built: see [fixtures](fixtures.md). | When you can't add an endpoint to your backend. |
+| **1: fixtures.** JSON files in `.tapthrough/fixtures/`. The SDK answers the app's network calls itself. | No backend work, and no seed hook. See [fixtures](fixtures.md). | When you can't add an endpoint to your backend. |
 | **2: seed hook.** One HTTP endpoint in your own stack creates a test user and data, and returns a session. | A stage environment where creating test users is allowed, and one endpoint on it, in any language. See [the seed hook contract](seed-hook-contract.md). | When screens need specific records, roles or empty states, or when reviewers must not see each other's changes. |
 
 One app can mix tiers: a scenario with `"seed": { "tier": 0 }` and another with a preset can sit side by

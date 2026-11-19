@@ -21,7 +21,8 @@ to write it in any language.
 3. Redeems the token with Tapthrough. A token works once, and redeeming returns the scenario: which
    preset to run, its params, the route and any feature flags.
 4. Runs the preset, or your shared test account for tier 0 scenarios.
-5. Returns `{ session, refs, route, flags }` to the app.
+5. Returns `{ apiVersion: 1, session, refs, route, flags }` to the app. For a scenario that uses
+   [fixtures](../../docs/fixtures.md) it runs no preset and passes the fixtures on.
 
 ## Presets
 
@@ -167,7 +168,8 @@ Errors come back as `{ error: { code, message } }`, and the app shows the messag
 | 400 | `unknown_preset`, `invalid_params` | The scenario asked for a preset or params this hook doesn't have. |
 | 403 | `repo_not_allowed` | The link came from a repo not in `repos`. |
 | 500 | `seed_failed` | Your preset threw. The response has an error ID; the details are in your logs. |
-| 501 | `tier_unsupported` | Tier 0 without a `sharedAccount`, or tier 1. |
+| 501 | `tier_unsupported` | Tier 0 without a `sharedAccount`. |
+| 502 | `fixtures_missing` | A fixtures scenario, and Tapthrough sent no fixture file. |
 
 ## License
 

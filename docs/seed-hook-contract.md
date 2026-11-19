@@ -116,7 +116,11 @@ The order matters. Each step must pass before the next one runs. This is the ord
      defaults). If they are wrong, answer `400 invalid_params` and name the field. Then run the preset.
    - `tier: 0`: sign in to your shared test account, if your seed hook supports one. Otherwise answer
      `501 tier_unsupported`.
-   - `tier: 1`: answer `501 tier_unsupported`. The reference handler does this.
+   - `tier: 1`: the scenario uses [fixtures](fixtures.md) and needs nothing from your backend. The
+     redeem response carries a `fixtures` object. Copy it into your response unchanged, and set
+     `session` to `fixtures.session`, or `{}` if it has none. If the redeem response has no
+     `fixtures`, answer `502 fixtures_missing`. An app that only uses fixtures needs no seed hook
+     at all: it redeems the link itself.
 8. **Respond** with `200` and [the success response](#the-success-response). Copy `route` and `flags`
    from the redeem response without changing them.
 
@@ -158,7 +162,9 @@ A `200` response:
 | `seed.role` | string | Optional. The role the scenario asks for, for example `viewer`. |
 | `route.path` | string starting with `/` | A file-router path with `[param]` segments |
 | `route.params` | object of strings | Values may be `$seed.` references. Defaults to `{}`. |
+| `seed.fixtures` | string | Always present for tier 1: the fixture file's name |
 | `flags` | object of booleans or strings | Defaults to `{}` |
+| `fixtures` | object | Tier 1 only: the [fixture file](fixtures.md), read from the PR's commit |
 
 What to do with other answers:
 
@@ -176,6 +182,7 @@ Errors that redeem returns today:
 | 400 | `bad_request` | The body had no `token` |
 | 401 | `invalid`, `expired`, `wrong_audience` | Redeem verifies the token again |
 | 409 | `token_used` | The link was already opened. The reviewer reopens it from the PR. |
+| 422 | `fixtures_missing`, `fixtures_invalid` | Tier 1, and the fixture file is absent or unreadable. The token is not used up. |
 | 410 | `link_expired` | The pull request is closed |
 | 429 | `rate_limited` | The link was opened too many times in a short period |
 | 500 | `scenario_invalid` | The stored scenario failed validation |
@@ -205,6 +212,7 @@ Cache-Control: no-store
 | `refs` | Yes | A JSON object with the records the preset created. Use `{}` if there are none. |
 | `route` | Yes | Copied from the redeem response |
 | `flags` | No | Copied from the redeem response. Defaults to `{}`. |
+| `fixtures` | Tier 1 only | Copied from the redeem response. Leave it out for other tiers. |
 
 ### What the app does with it
 
@@ -253,7 +261,8 @@ The app shows `message` to the reviewer as it is, so write it for them.
 | as received | as received | An error from redeem, passed through: `token_used` (409), `link_expired` (410) and the others in [the redeem call](#the-redeem-call) |
 | 400 | `unknown_preset` | The scenario names a preset this seed hook does not have |
 | 400 | `invalid_params` | The scenario's params fail the preset's checks |
-| 501 | `tier_unsupported` | Tier 0 without a shared test account, or tier 1 |
+| 501 | `tier_unsupported` | Tier 0 without a shared test account |
+| 502 | `fixtures_missing` | Tier 1, and the redeem response had no `fixtures` |
 | 500 | `seed_failed` | Anything else, usually an error inside a preset |
 
 If the app receives a non-`2xx` answer without this body, the reviewer sees
